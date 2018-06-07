@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -135,12 +136,24 @@ func main() {
 	// Face 方法返回人脸图片的特征值，需要指定人脸的范围，为4个x，y坐标值，可由FaceBoxes方法获得
 
 	reqURL := "http://ava-serving-gate.cs.cg.dora-internal.qiniu.io:5001"
-	imgURL := "http://oayjpradp.bkt.clouddn.com/age_gender_test.png1"
-	// imgURL := "https://timgsa.baidu.com/timg?image&quality=80&size=b9999_10000&sec=1528783194&di=1f0587e1eb038d24102cc41254be8e93&imgtype=jpg&er=1&src=http%3A%2F%2Fimg.zcool.cn%2Fcommunity%2F0176565a1e2322a80120908d93209c.png%401280w_1l_2o_100sh.png"
-	// imgURL := "https://timgsa.baidu.com/timg?image&quality=80&size=b9999_10000&sec=1528180701580&di=58f7ca5c2b97cc9e871f9f62c88c212c&imgtype=0&src=http%3A%2F%2Fe.hiphotos.baidu.com%2Fzhidao%2Fpic%2Fitem%2Fa08b87d6277f9e2faba04ea51a30e924b999f382.jpg"
-	// imgURL := "/Users/zhaoning/Desktop/download.jpeg"
-	// input := []byte(imgURL)
-	// imgBase64 := base64.StdEncoding.EncodeToString(input)
+	// imgURL := "http://oayjpradp.bkt.clouddn.com/age_gender_test.png"
+
+	// no human image but face detected ???!!
+	// imgURL := "http://imgsrc.baidu.com/imgad/pic/item/bf096b63f6246b60553a62a0e1f81a4c510fa22a.jpg"
+
+	//keybord image
+	// imgURL := "https://timgsa.baidu.com/timg?image&quality=80&size=b9999_10000&sec=1528194279170&di=8d7e47958792fa6719e179b7de9f2cdf&imgtype=0&src=http%3A%2F%2Fpic.58pic.com%2F58pic%2F14%2F79%2F64%2F04I58PICefM_1024.jpg"
+
+	imgFileURL := "/Users/zhaoning/Desktop/testFace/download.jpeg"
+	dat, err := ioutil.ReadFile(imgFileURL)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	imgBase64 := base64.StdEncoding.EncodeToString(dat)
+	imgURL := "data:application/octet-stream;base64," + imgBase64
+	fmt.Println(imgURL)
+
 	timout := time.Duration(0 * time.Second)
 	face := feature.NewFaceFeature(reqURL, timout, 2048)
 	ctx := context.Background()
@@ -158,7 +171,7 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-		fmt.Println(len(fv))
+		fmt.Printf("length: %d\n", len(fv))
 	}
 
 }
