@@ -1,4 +1,4 @@
-package multithread
+package multithreadwithorder
 
 var (
 	defaultMaxWorker = 100
@@ -14,21 +14,21 @@ func (j *Job) execute() {
 }
 
 type worker struct {
-	jobPool chan Job
-	quit    chan bool
+	jobCh chan Job
+	quit  chan bool
 }
 
-func newWorker(jobPool chan Job) worker {
-	return worker{
-		jobPool: jobPool,
-		quit:    make(chan bool)}
+func newWorker(jobCh chan Job) *worker {
+	return &worker{
+		jobCh: jobCh,
+		quit:  make(chan bool)}
 }
 
 func (w *worker) start() {
 	go func() {
 		for {
 			select {
-			case job, ok := <-w.jobPool:
+			case job, ok := <-w.jobCh:
 				if !ok {
 					return
 				}
@@ -47,22 +47,25 @@ func (w *worker) stop() {
 }
 
 type dispatcher struct {
-	jobPool    chan Job
+	JobPool    []chan Job
 	workerPool []worker
 }
 
-func NewDispatcher(jobPool chan Job, maxWorkers int) *dispatcher {
+func NewDispatcher(maxWorkers int) *dispatcher {
 	numWorker := maxWorkers
 	if numWorker <= 0 {
 		numWorker = defaultMaxWorker
 	}
 
 	workers := []worker{}
+	chPool := []chan Job{}
 	for i := 0; i < numWorker; i++ {
-		worker := newWorker(jobPool)
-		workers = append(workers, worker)
+		ch := make(chan Job)
+		worker := newWorker(ch)
+		workers = append(workers, *worker)
+		chPool = append(chPool, ch)
 	}
-	return &dispatcher{jobPool: jobPool, workerPool: workers}
+	return &dispatcher{JobPool: chPool, workerPool: workers}
 }
 
 func (d *dispatcher) Start() {
