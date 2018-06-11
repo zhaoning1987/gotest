@@ -22,7 +22,7 @@ type Person struct {
 	Phone string //`bson:"k"`
 }
 
-func main1() {
+func main() {
 	// session, err := mgo.Dial("") //传入数据库的地址，可以传入多个，具体请看接口文档
 
 	session, err := mgoutil.Dail(dbConfig.Host, dbConfig.Mode, dbConfig.SyncTimeoutInS)
@@ -45,7 +45,7 @@ func main1() {
 
 	// result := Person{}
 	var results []Person
-	err = coll.Find(bson.M{}).All(&results) //如果查询失败，返回“not found”
+	err = coll.Find(bson.M{"name": "n2ing"}).All(&results) //如果查询失败，返回“not found”
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -6,20 +6,22 @@ var (
 
 type Job struct {
 	Param []interface{}
-	Fn    func(...interface{})
+	Fn    func(workerIndex int, param ...interface{})
 }
 
-func (j *Job) execute() {
-	j.Fn(j.Param...)
+func (j *Job) execute(workerIndex int) {
+	j.Fn(workerIndex, j.Param...)
 }
 
 type worker struct {
+	index   int
 	jobPool chan Job
 	quit    chan bool
 }
 
-func newWorker(jobPool chan Job) worker {
+func newWorker(index int, jobPool chan Job) worker {
 	return worker{
+		index:   index,
 		jobPool: jobPool,
 		quit:    make(chan bool)}
 }
@@ -32,7 +34,7 @@ func (w *worker) start() {
 				if !ok {
 					return
 				}
-				job.execute()
+				job.execute(w.index)
 			case <-w.quit:
 				return
 			}
@@ -59,7 +61,7 @@ func NewDispatcher(jobPool chan Job, maxWorkers int) *dispatcher {
 
 	workers := []worker{}
 	for i := 0; i < numWorker; i++ {
-		worker := newWorker(jobPool)
+		worker := newWorker(i, jobPool)
 		workers = append(workers, worker)
 	}
 	return &dispatcher{jobPool: jobPool, workerPool: workers}
