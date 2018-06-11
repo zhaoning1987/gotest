@@ -210,8 +210,8 @@ func main() {
 	prepare()
 
 	coll := session.DB(dbConfig.DB).C("all")
-	poolSize := 1000
-	workerSize := 100
+	poolSize := 10
+	workerSize := 10
 	jobPool = make(chan multithread.Job, poolSize)
 	dispatcher := multithread.NewDispatcher(jobPool, workerSize)
 	dispatcher.Start()
