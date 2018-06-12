@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,150 +12,95 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
+	multithread "app/multithread"
+
 	mgoutil "github.com/qiniu/db/mgoutil.v3"
-	mgo "gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
+	"qbox.us/cc/config"
 	"qiniu.com/ava/argus/feature_group_private/feature"
 	"qiniu.com/ava/argus/feature_group_private/proto"
-
-	multithread "app/multithread"
-)
-
-const (
-	BASE64_PREFIX = "data:application/octet-stream;base64,"
 )
 
 var (
-	logPath      = "./log/"
-	lastMinIndex = 0
-	lastMaxIndex = 0
-	wg           sync.WaitGroup
-	dirPath      = "/Users/zhaoning/Desktop/testFace/"
-	reqURL       = "http://ava-serving-gate.cs.cg.dora-internal.qiniu.io:5001"
-	// reqURL = "http://100.100.58.85:9000"
-	imgURL = "http://oayjpradp.bkt.clouddn.com/age_gender_test.png"
-	// imgURL   = "https://timgsa.baidu.com/timg?image&quality=80&size=b9999_10000&sec=1528194279170&di=8d7e47958792fa6719e179b7de9f2cdf&imgtype=0&src=http%3A%2F%2Fpic.58pic.com%2F58pic%2F14%2F79%2F64%2F04I58PICefM_1024.jpg"
-	timout   = time.Duration(0 * time.Second)
-	dbConfig = mgoutil.Config{
-		Host:           "localhost:27017",
-		DB:             "testFace",
-		Mode:           "strong",
-		SyncTimeoutInS: 1,
-	}
-	jobPool chan multithread.Job
+	conf          Config
+	imgURL        = "http://oayjpradp.bkt.clouddn.com/age_gender_test.png"
+	jobPool       chan multithread.Job
+	lastMinIndex  int
+	lastMaxIndex  int
+	wg            sync.WaitGroup
+	logPath       string
+	systemLogFile string
+	errorListFile string
 )
 
-type FaceJob struct {
-	index       int
-	ctx         *context.Context
-	faceFeature feature.FaceFeature
-	uri         string
-	path        string
-	collection  *mgo.Collection
-	wg          *sync.WaitGroup
-}
-
-type Face struct {
-	Path string
-	Spec []byte
-}
-
-func getFaceFeatureByURI(ctx *context.Context, face feature.FaceFeature, uri string) (fv proto.FeatureValue, err error) {
-	// t1 := time.Now()
-	boudingBox, err := face.FaceBoxes(*ctx, proto.ImageURI(uri))
-	// fmt.Println("time begin facebox: ", t1, "Time used: ", time.Since(t1))
-	if err != nil {
-		// TODO
-		return nil, errors.Wrapf(err, "error when calling func FaceBoxes")
-	}
-
-	if len(boudingBox) == 0 {
-		// TODO
-		return nil, errors.Errorf("do not contain any face for the image: %s", uri)
-	} else if len(boudingBox) > 1 {
-		// TODO
-		return nil, errors.Errorf("contain more than one face for the image: %s " + uri)
-	} else {
-		for _, box := range boudingBox {
-			// t2 := time.Now()
-			fv, err = face.Face(*ctx, proto.ImageURI(uri), box.Pts)
-			// fmt.Println("time begin facefeature: ", t2, "Time used: ", time.Since(t2))
-			if err != nil {
-				// TODO
-				return nil, errors.Wrapf(err, "error when calling func Face")
-			}
-		}
-	}
-	return
-}
-
-func getFaceFeatureByData(ctx *context.Context, face feature.FaceFeature, data []byte) (fv proto.FeatureValue, err error) {
-	imgBase64 := BASE64_PREFIX + base64.StdEncoding.EncodeToString(data)
-	return getFaceFeatureByURI(ctx, face, imgBase64)
-}
-
 func getFeatureAndSave(workerIndex int, param ...interface{}) {
-	//when start to handle a face, we log it
 	fj := param[0].(*FaceJob)
-	log(workerIndex, strconv.Itoa(fj.index))
+
+	//when start to handle a face, we log its index
+	uploadLog(fmt.Sprintf(logPath+"%d.log", workerIndex), strconv.Itoa(fj.index))
 	defer fj.wg.Done()
-	fv, err := getFaceFeatureByURI(fj.ctx, fj.faceFeature, fj.uri)
+
+	var (
+		fv  proto.FeatureValue
+		err error
+	)
+	if fj.imageContent != nil {
+		fv, err = getFaceFeatureByData(fj.ctx, fj.faceFeature, fj.imageContent, fj.imageURI)
+	} else {
+		fv, err = getFaceFeatureByURI(fj.ctx, fj.faceFeature, fj.imageURI)
+	}
+
 	if err != nil {
-		fmt.Println(err)
-		fj.wg.Add(1)
-		retry := multithread.Job{}
-		retry.Param = []interface{}{fj}
-		retry.Fn = getFeatureAndSave
-		jobPool <- retry
-		fmt.Println("retry", fj.index)
+		//when error, retry
+		retry(err.Error(), fj)
 		return
 	}
 
 	// wait := rand.Intn(5) + 1
 	// time.Sleep(time.Duration(wait) * 100 * time.Millisecond)
 	// fv := []byte("for test")
-	face := &Face{fj.path, fv}
+	face := &Face{fj.imageURI, fv}
 	err = fj.collection.Insert(face)
 	if err != nil {
-		fmt.Println(err)
+		//when error, retry
+		retry(err.Error(), fj)
 	}
 }
 
-func log(index int, msg string) {
-	err := ioutil.WriteFile(fmt.Sprintf(logPath+"%d.log", index), []byte(msg), 0644)
-	if err != nil {
-		panic(err)
+func retry(errMsg string, fj *FaceJob) {
+	//log tye error to system log
+	systemLog(errMsg)
+	if fj.tryTime == conf.MaxTryTime {
+		//reach the max retry time, store this file in errorlist log
+		errorListLog(errMsg)
+	} else {
+		//retry
+		fj.tryTime++
+		fj.wg.Add(1)
+		retry := multithread.Job{}
+		retry.Param = []interface{}{fj}
+		retry.Fn = getFeatureAndSave
+		jobPool <- retry
 	}
-}
-
-func pathExists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
+	return
 }
 
 func prepare() {
 	// 1.create log dir if not exist
 	exist, err := pathExists(logPath)
 	if err != nil {
-		fmt.Printf("get directory error![%v]\n", err)
+		fmt.Printf("get directory [%s] error: %v\n", logPath, err)
 		panic(err)
 	}
 	if !exist {
-		fmt.Printf("no directory: %v\n", logPath)
+		fmt.Printf(fmt.Sprintf("no directory [%s]\n", logPath))
 		// create folder
 		err := os.Mkdir(logPath, os.ModePerm)
 		if err != nil {
-			fmt.Printf("create directory failed: %v\n", logPath)
+			fmt.Printf(fmt.Sprintf("create directory [%s] failed: %v\n", logPath, err))
 			panic(err)
 		} else {
-			fmt.Printf("create directory success: %v\n", logPath)
+			fmt.Printf(fmt.Sprintf("create directory [%s] success\n", logPath))
 		}
 	}
 
@@ -166,27 +110,25 @@ func prepare() {
 		if f == nil {
 			return err
 		}
-		if f.IsDir() {
+		if f.IsDir() || filepath.Ext(path) != ".log" {
 			return nil
 		}
 
 		dat, err := ioutil.ReadFile(path)
 		if err != nil {
-			// TODO
-			fmt.Println(err)
-			return nil
+			return err
 		}
+
 		index, err := strconv.Atoi(string(dat))
 		if err != nil {
-			// TODO
-			fmt.Println(err)
-			return nil
+			return err
 		}
 		indexes = append(indexes, index)
 		return nil
 	})
 	if err != nil {
-		fmt.Printf("filepath.Walk() returned %v\n", err)
+		systemLog(fmt.Sprintf("error when filepath.Walk() on [%s]: %v", logPath, err))
+		panic(err)
 	}
 	if indexes == nil {
 		lastMinIndex = 0
@@ -196,61 +138,124 @@ func prepare() {
 		lastMinIndex = indexes[0]
 		lastMaxIndex = indexes[len(indexes)-1]
 	}
-
+	systemLogFile = logPath + "output"
+	errorListFile = logPath + "errorlist"
 }
 
 func main() {
-	faceFeature := feature.NewFaceFeature(reqURL, timout, 2048)
+	config.Init("f", "/upload", "upload.conf")
+	if err := config.Load(&conf); err != nil {
+		log.Fatal("Failed to load configure file")
+	}
+	fmt.Printf("configuration: %+v\n", conf)
+	logPath = conf.LogPath
+	faceFeature := feature.NewFaceFeature(conf.HTTPHost, time.Duration(conf.Timeout)*time.Millisecond, 2048)
 	ctx := context.Background()
-	session, err := mgoutil.Dail(dbConfig.Host, dbConfig.Mode, dbConfig.SyncTimeoutInS)
+	session, err := mgoutil.Dail(conf.DBConfig.Host, conf.DBConfig.Mode, conf.DBConfig.SyncTimeoutInS)
 	if err != nil {
 		panic(err)
 	}
 	defer session.Close()
+
 	prepare()
 
-	coll := session.DB(dbConfig.DB).C("all")
-	poolSize := 10
-	workerSize := 10
+	coll := session.DB(conf.DBConfig.DB).C(conf.DBCollection)
+	poolSize := conf.PoolSize
+	workerSize := conf.ThreadNumber
 	jobPool = make(chan multithread.Job, poolSize)
 	dispatcher := multithread.NewDispatcher(jobPool, workerSize)
 	dispatcher.Start()
 	t1 := time.Now()
 
-	rand.Seed(time.Now().UnixNano())
-	for i := 0; i < poolSize; i++ {
-		//handle the file
-		path := fmt.Sprintf("/usr/local/images/image%d", i)
+	if lastMinIndex == 0 && lastMaxIndex == 0 {
+		systemLog("start")
+	} else {
+		systemLog(fmt.Sprintf("continue, the previous stop points are from %d to %d", lastMinIndex, lastMaxIndex))
+	}
 
+	//====== image from url
+	// for i := 0; i < poolSize; i++ {
+	// 	//handle the file
+	// 	path := fmt.Sprintf("/usr/local/images/image%d", i)
+
+	// 	if i < lastMinIndex {
+	// 		// this file is already handled in the last time, so skip it
+	// 		continue
+	// 	}
+
+	// 	if i <= lastMaxIndex && lastMaxIndex > 0 {
+	// 		// not sure this file is handled or not, check it
+	// 		// if exist, skip it
+	// 		result := Face{}
+	// 		err = coll.Find(bson.M{"path": path}).One(&result)
+	// 		if err == nil {
+	// 			// no error => item found => file handled => we skip this file
+	// 			systemLog(fmt.Sprintf("file %s is already handled during the previous run", path))
+	// 			continue
+	// 		} else {
+	// 			systemLog(fmt.Sprintf("file %s is not handled during the previous run, do it this time", path))
+	// 		}
+	// 	}
+
+	// 	wg.Add(1)
+	// 	job := multithread.Job{}
+	// 	job.Param = []interface{}{&FaceJob{i, &ctx, &faceFeature, nil, imgURL, coll, &wg, 1}}
+	// 	job.Fn = getFeatureAndSave
+	// 	jobPool <- job
+	// }
+
+	//====== image from folder
+	i := 0
+	err = filepath.Walk(conf.ImageDirPath, func(path string, f os.FileInfo, err error) error {
+		if f == nil {
+			return err
+		}
+		if f.IsDir() {
+			// TODO need to add only handle image
+			return nil
+		}
+
+		data, err := ioutil.ReadFile(path)
+		if err != nil {
+			// TODO problem file
+			fmt.Println(err)
+			return nil
+		}
+
+		//start to handle normal file
+		i++
 		if i < lastMinIndex {
-			// this file is already handled in the last time
-			continue
+			// this file is already handled in the last time, so skip it
+			return nil
 		}
 
 		if i <= lastMaxIndex && lastMaxIndex > 0 {
-			// not sure this file is handled or not, check it
-			// if exist, skip it
+			// not sure this file is handled or not, check it. if exist, skip it
 			result := Face{}
-			err = coll.Find(bson.M{"path": path}).One(&result)
-			if err == nil {
-				// if no error, then item found, so we skip this file
-				fmt.Println("found item", i)
-				continue
-			} else {
-				fmt.Println("not found item", i)
+			if err = coll.Find(bson.M{"path": path}).One(&result); err == nil {
+				// no error => item found => file handled => we skip this file
+				systemLog(fmt.Sprintf("file %s is already handled during the previous run", path))
+				return nil
 			}
+			systemLog(fmt.Sprintf("file %s is not handled during the previous run, do it this time", path))
 		}
 
 		wg.Add(1)
 		job := multithread.Job{}
-		job.Param = []interface{}{&FaceJob{i, &ctx, &faceFeature, imgURL, path, coll, &wg}}
+		job.Param = []interface{}{&FaceJob{i, &ctx, &faceFeature, data, path, coll, &wg, 1}}
 		job.Fn = getFeatureAndSave
 		jobPool <- job
+
+		return nil
+	})
+	if err != nil {
+		systemLog(fmt.Sprintf("error when filepath.Walk() on [%s]: %v", conf.ImageDirPath, err))
+		panic(err)
 	}
 
 	wg.Wait()
 	close(jobPool)
 	elapsed := time.Since(t1)
 	fmt.Println("Time elapsed: ", elapsed)
-
+	systemLog("finished!!!")
 }
