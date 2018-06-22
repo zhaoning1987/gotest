@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+DBSTORAGEROOT=$(cd ../../../../../..; pwd)
+set -ex
+GOOS=linux GOARCH=amd64 go install qiniu.com/argus/argus/feature_group_private/dbstorage
+cp -r $DBSTORAGEROOT/bin/linux_amd64/dbstorage .
+cp -r $DBSTORAGEROOT/src/qiniu.com/argus/argus/feature_group_private/dbstorage/dbstorage.conf .

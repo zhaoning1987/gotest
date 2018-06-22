@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+DBSTORAGE=$(cd ../../..; pwd)
+set -ex
+GOOS=linux go install app
+cp -r $DBSTORAGE/bin/linux_amd64/app .

@@ -2,37 +2,55 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
+	"log"
 	"os"
-	"sync"
-	"time"
+	"path/filepath"
+	"strings"
 )
 
-var wg sync.WaitGroup
-var f *os.File
-
 func main() {
-	t1 := time.Now()
-	f, err := os.OpenFile("/Users/zhaoning/Desktop/multi", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-	for i := 0; i < 1000; i++ {
-		wg.Add(1)
-		go saveErrorToFile(f, i)
-	}
-	wg.Wait()
-
-	fmt.Println(time.Since(t1))
+	fmt.Println("hello ning1111111!")
 }
 
-func saveErrorToFile(file *os.File, i int) {
+func main1() {
+	file, err := os.OpenFile("/Users/zhaoning/Desktop/imageList", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer file.Close()
 
-	time.Sleep(time.Duration(rand.Intn(5)) * 100 * time.Millisecond)
-	content := fmt.Sprintf("%d\n", i)
-	buf := []byte(content)
-	file.Write(buf)
-	wg.Done()
+	err = filepath.Walk("/Users/zhaoning/Documents/tomcatimage", func(path string, f os.FileInfo, err error) error {
+		if f == nil {
+			return err
+		}
 
+		//skip directory & windows thumb file & linux max hidden file
+		if f.IsDir() || strings.ToLower(f.Name()) == "thumb.db" || substring(f.Name(), 0, 1) == "." {
+			return nil
+		}
+
+		content := fmt.Sprintf("http://localhost:8080/test/%s\n", f.Name())
+		buf := []byte(content)
+		file.Write(buf)
+		return nil
+	})
+	if err != nil {
+		fmt.Println(err)
+	}
+
+}
+
+func substring(source string, start int, end int) string {
+	var r = []rune(source)
+	length := len(r)
+
+	if start < 0 || end > length || start > end {
+		return ""
+	}
+
+	if start == 0 && end == length {
+		return source
+	}
+
+	return string(r[start:end])
 }

@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"crypto/md5"
-	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -13,102 +13,139 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	mgoutil "github.com/qiniu/db/mgoutil.v3"
-	mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
-	"qiniu.com/ava/argus/feature_group_private/feature"
+	xlog "github.com/qiniu/xlog.v1"
+	"qiniu.com/ava/argus/facec/client"
 	"qiniu.com/ava/argus/feature_group_private/proto"
 )
 
 const (
 	BASE64_PREFIX = "data:application/octet-stream;base64,"
-	FEATURE_SIZE  = 2048
 )
 
 type Config struct {
-	LogPath       string         `json:"log_path"`
-	ImageDirPath  string         `json:"image_dir_path"`
-	ImageListFile string         `json:"image_list_file"`
-	HTTPHost      string         `json:"qiniu_host_url"`
-	Timeout       int            `json:"http_timeout_in_millisecond"`
-	MaxTryTime    int            `json:"max_try_time"`
-	ThreadNumber  int            `json:"thread_number"`
-	PoolSize      int            `json:"job_pool_size"`
-	DBConfig      mgoutil.Config `json:"db_config"`
-	DBCollection  string         `json:"db_collection_name"`
+	LogPath            string `json:"log_path"`
+	ImageDirPath       string `json:"image_dir_path"`
+	ImageListFile      string `json:"image_list_file"`
+	UseImageDirPath    bool   `json:"use_image_dir_path"`
+	HTTPHost           string `json:"qiniu_host_url"`
+	Timeout            int    `json:"http_timeout_in_millisecond"`
+	MaxTryServiceTime  int    `json:"max_try_service_time"`
+	MaxTryDownloadTime int    `json:"max_try_download_time"`
+	ThreadNumber       int    `json:"thread_number"`
+	PoolSize           int    `json:"job_pool_size"`
+	GroupName          string `json:"group_name"`
 }
 
 type FaceJob struct {
 	index        int
 	ctx          *context.Context
-	faceFeature  feature.FaceFeature
+	faceGroup    *faceGroup
 	imageContent []byte
 	imageURI     string
-	collection   *mgo.Collection
 	wg           *sync.WaitGroup
-	tryTime      int
 }
 
-type Face struct {
-	URI     string `bson:"uri"`
-	Feature []byte `bson:"feature"`
-	Md5     string `bson:"md5"`
+type faceGroup struct {
+	host    string
+	timeout time.Duration
 }
 
-func getFaceFeature(ctx *context.Context, face feature.FaceFeature, imageContent string, imageSource string) (fv proto.FeatureValue, err error) {
-	boudingBox, err := face.FaceBoxes(*ctx, proto.ImageURI(imageContent))
+func NewFaceGroup(host string, timeout time.Duration) *faceGroup {
+	return &faceGroup{
+		host:    host,
+		timeout: timeout,
+	}
+}
+
+func (fg *faceGroup) Add(ctx context.Context, groupName string, id proto.FeatureID, uri proto.ImageURI) (respID proto.FeatureID, err error) {
+	cli := client.NewRPCClient(client.EvalEnv{Uid: 1, Utype: 0}, fg.timeout)
+
+	if len(uri) == 0 {
+		return "", errors.New("image do not contain any data")
+	}
+
+	req := map[string]interface{}{"image": map[string]string{"id": string(id), "uri": string(uri)}}
+
+	resp, err := cli.DoRequestWithJson(ctx, "POST", fg.host+"/v1/face/groups/"+groupName+"/add", req)
 	if err != nil {
-		return nil, errors.Wrapf(err, fmt.Sprintf("error when calling func FaceBoxes for the image: %s", imageSource))
+		return "", errors.Wrap(err, "request to PostGroup_Add failed")
+	}
+	defer resp.Body.Close()
+	content, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", errors.Wrap(err, "read PostGroup_Add response failed")
 	}
 
-	if len(boudingBox) == 0 {
-		return nil, errors.Errorf("do not contain any face for the image: %s", imageSource)
-	} else if len(boudingBox) > 1 {
-		return nil, errors.Errorf("contain more than one face for the image: %s " + imageSource)
-	} else {
-		for _, box := range boudingBox {
-			fv, err = face.Face(*ctx, proto.ImageURI(imageContent), box.Pts)
-			if err != nil {
-				return nil, errors.Wrapf(err, fmt.Sprintf("error when calling func Face for the image: %s", imageSource))
-			}
-		}
+	if resp.StatusCode/100 != 2 {
+		return "", errors.Errorf("PostGroup_Add return error: %s", string(content))
 	}
-	return
+
+	result := struct {
+		ID proto.FeatureID `json:"id"`
+	}{}
+	err = json.Unmarshal(content, &result)
+	if err != nil {
+		return "", errors.Wrapf(err, "parse PostGroup_Add response failed, response body is: %s", string(content))
+	}
+
+	return result.ID, nil
 }
 
-func getFaceFeatureByURI(ctx *context.Context, face feature.FaceFeature, uri string) (fv proto.FeatureValue, err error) {
-	return getFaceFeature(ctx, face, uri, uri)
+func (fg *faceGroup) CreateGroup(ctx context.Context, groupName string) error {
+	cli := client.NewRPCClient(client.EvalEnv{Uid: 1, Utype: 0}, fg.timeout)
+
+	req := map[string]interface{}{"config": map[string]int{"capacity": 100000000}}
+
+	resp, err := cli.DoRequestWithJson(ctx, "POST", fg.host+"/v1/face/groups/"+groupName, req)
+	if err != nil {
+		return errors.Wrap(err, "request to PostGroup_ failed")
+	}
+	defer resp.Body.Close()
+	content, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return errors.Wrap(err, "read PostGroup_ response failed")
+	}
+
+	if resp.StatusCode/100 != 2 {
+		return errors.Errorf("PostGroup_ return error: %s", string(content))
+	}
+
+	return nil
 }
 
-func getFaceFeatureByData(ctx *context.Context, face feature.FaceFeature, imageContent []byte, imageSource string) (fv proto.FeatureValue, err error) {
-	imgBase64 := BASE64_PREFIX + base64.StdEncoding.EncodeToString(imageContent)
-	return getFaceFeature(ctx, face, imgBase64, imageSource)
+func (fg *faceGroup) Delete(ctx context.Context, groupName string, id ...proto.FeatureID) error {
+	cli := client.NewRPCClient(client.EvalEnv{Uid: 1, Utype: 0}, fg.timeout)
+
+	req := map[string]interface{}{"ids": id}
+
+	resp, err := cli.DoRequestWithJson(ctx, "POST", fg.host+"/v1/face/groups/"+groupName+"/delete", req)
+	if err != nil {
+		return errors.Wrap(err, "request to PostGroup_Delete failed")
+	}
+	defer resp.Body.Close()
+	content, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return errors.Wrap(err, "read PostGroup_Delete response failed")
+	}
+
+	if resp.StatusCode/100 != 2 {
+		return errors.Errorf("PostGroup_Delete return error: %s", string(content))
+	}
+
+	return nil
 }
 
-func uploadLog(path string, msg string) {
+func writeToFile(log *xlog.Logger, path string, msg string) {
 	err := ioutil.WriteFile(path, []byte(msg), 0644)
 	if err != nil {
-		panic(err)
+		log.Fatalln(err)
 	}
 }
 
-func systemLog(msg string) {
-	fmt.Println(msg)
-	f, err := os.OpenFile(systemLogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+func appendToFile(log *xlog.Logger, path string, msg string) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-	curTime := time.Now().Format("2006-01-02 15:04:05")
-	content := fmt.Sprintf("%s %s\n", curTime, msg)
-	buf := []byte(content)
-	f.Write(buf)
-}
-
-func errorListLog(msg string) {
-	f, err := os.OpenFile(errorListFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		panic(err)
+		log.Fatalln(err)
 	}
 	defer f.Close()
 	content := fmt.Sprintf("%s\n", msg)
@@ -127,34 +164,28 @@ func pathExists(path string) (bool, error) {
 	return false, err
 }
 
+func createPath(log *xlog.Logger, path string) {
+	exist, err := pathExists(path)
+	if err != nil {
+		xl.Fatalf("get directory [%s] error: %v\n", path, err)
+	}
+	if !exist {
+		xl.Infof("no directory [%s]\n", path)
+		//create folder
+		err := os.Mkdir(path, os.ModePerm)
+		if err != nil {
+			xl.Fatalf("create directory [%s] failed: %v\n", path, err)
+		} else {
+			xl.Infof("create directory [%s] success\n", path)
+		}
+	}
+}
+
 func getMd5(data []byte) string {
 	h := md5.New()
 	h.Write(data)
 	cipherStr := h.Sum(nil)
 	return hex.EncodeToString(cipherStr)
-}
-
-func downloadFile(url string) (content []byte, err error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, errors.Wrapf(err, fmt.Sprintf("error when trying to get image: %s", url))
-	}
-	defer resp.Body.Close()
-
-	content, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, errors.Wrapf(err, fmt.Sprintf("error when trying to read the content of image : %s", url))
-	}
-	return content, nil
-}
-
-func valueExistInDB(coll *mgo.Collection, key string, value string) bool {
-	face := Face{}
-	err := coll.Find(bson.M{key: value}).One(&face)
-	if err == nil {
-		return true
-	}
-	return false
 }
 
 func substring(source string, start int, end int) string {
@@ -170,4 +201,22 @@ func substring(source string, start int, end int) string {
 	}
 
 	return string(r[start:end])
+}
+
+func downloadFile(url string) (content []byte, err error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, errors.Wrapf(err, fmt.Sprintf("error when trying to get image: %s", url))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		return nil, errors.Errorf("failed to get image, response status code : %d", resp.StatusCode)
+	}
+
+	content, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.Wrapf(err, fmt.Sprintf("error when trying to read the content of image : %s", url))
+	}
+	return content, nil
 }

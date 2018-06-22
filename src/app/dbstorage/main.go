@@ -3,9 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,123 +14,99 @@ import (
 	"sync"
 	"time"
 
-	mgoutil "github.com/qiniu/db/mgoutil.v3"
-	threadpool "qiniu.com/ava/argus/feature_group_private/dbstorage/threadpool"
-
-	mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
+	xlog "github.com/qiniu/xlog.v1"
 	"qbox.us/cc/config"
-	"qiniu.com/ava/argus/feature_group_private/feature"
+	"qiniu.com/ava/argus/feature_group_private/manager"
 	"qiniu.com/ava/argus/feature_group_private/proto"
 )
 
 var (
-	conf          Config
-	jobPool       chan threadpool.Job
-	lastMinIndex  int
-	lastMaxIndex  int
-	wg            sync.WaitGroup
-	logPath       string
-	systemLogFile string
-	errorListFile string
+	conf           Config
+	jobPool        chan FaceJob
+	lastMinIndex   int
+	wg             sync.WaitGroup
+	outputLogPath  string
+	systemLogFile  string
+	errorFile      string
+	processFile    string
+	md5Dict        map[string]struct{}
+	xl             *xlog.Logger
+	mutex          = &sync.Mutex{}
+	processLogPath = "./processlog/"
 )
 
-func getFeatureAndSave(workerIndex int, param ...interface{}) {
-	fj := param[0].(*FaceJob)
+func (fj *FaceJob) execute(workerIndex int) {
 
-	//when start to handle a face, we log its index into current thread's log file
-	uploadLog(fmt.Sprintf(logPath+"%d.log", workerIndex), strconv.Itoa(fj.index))
+	//when start to handle a face, we save its index in file
+	writeToFile(xl, fmt.Sprintf(processLogPath+"%d.log", workerIndex), strconv.Itoa(fj.index))
 	defer fj.wg.Done()
 
-	var (
-		fv  proto.FeatureValue
-		err error
-		md5 string
-	)
+	var err error
 
 	//if image content not passed, get it by url
 	if fj.imageContent == nil {
-		t1 := time.Now()
-		fj.imageContent, err = downloadFile(fj.imageURI)
-		fmt.Println("download time for", workerIndex, "is", time.Since(t1))
+		for i := 0; i < conf.MaxTryDownloadTime; i++ {
+			fj.imageContent, err = downloadFile(fj.imageURI)
+			if err == nil {
+				break
+			}
+		}
 		if err != nil {
-			retry(err.Error(), workerIndex, fj)
+			xl.Infof("%s : %s\n", fj.imageURI, err.Error())
+			appendToFile(xl, errorFile, fmt.Sprintf("%s : %s", fj.imageURI, err.Error()))
 			return
 		}
 	}
 
-	//check if this image exist in db
-	md5 = getMd5(fj.imageContent)
-	if valueExistInDB(fj.collection, "md5", md5) {
-		errorListLog(fmt.Sprintf("%s is duplicated, therefore not imported in database", fj.imageURI))
+	//check if this image exist
+	existed := false
+	md5 := getMd5(fj.imageContent)
+	mutex.Lock()
+	if _, ok := md5Dict[md5]; ok {
+		existed = true
+	} else {
+		md5Dict[md5] = struct{}{}
+	}
+	mutex.Unlock()
+
+	if existed {
+		//image exist, skip it
 		return
 	}
 
-	//get feature
-	fv, err = getFaceFeatureByURI(fj.ctx, fj.faceFeature, fj.imageURI)
-	if err != nil {
-		//when error, retry
-		retry(err.Error(), workerIndex, fj)
-		return
-	}
+	//call group_add service to store the image
+	imgBase64 := BASE64_PREFIX + base64.StdEncoding.EncodeToString(fj.imageContent)
 
-	face := &Face{fj.imageURI, fv, md5}
-	err = fj.collection.Insert(face)
-	if err != nil {
-		//if the err is caused by duplicated key, log the error
-		//else retry
-		if strings.Contains(err.Error(), "duplicate") {
-			errorListLog(fmt.Sprintf("%s is duplicated, therefore not imported in database", fj.imageURI))
-		} else {
-			retry(err.Error(), workerIndex, fj)
+	for i := 0; i < conf.MaxTryServiceTime; i++ {
+		_, err = fj.faceGroup.Add(*fj.ctx, conf.GroupName, proto.FeatureID(fj.imageURI), proto.ImageURI(imgBase64))
+		if err == nil {
+			break
 		}
 	}
-	return
-}
 
-func retry(errMsg string, workerIndex int, fj *FaceJob) {
-	//log error to system log
-	systemLog(errMsg)
-	if fj.tryTime == conf.MaxTryTime {
-		//reach the max retry time, store this file in errorlist log
-		errorListLog(errMsg)
-	} else {
-		//retry
-		fj.tryTime++
-		fj.wg.Add(1)
-		getFeatureAndSave(workerIndex, fj)
-		// fj.tryTime++
-		// fj.wg.Add(1)
-		// retry := threadpool.Job{}
-		// retry.Param = []interface{}{fj}
-		// retry.Fn = getFeatureAndSave
-		// jobPool <- retry
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, manager.ErrGroupNotExist.Err) {
+			xl.Fatalf("group <%s> not exist\n", conf.GroupName)
+		} else if !strings.Contains(errMsg, manager.ErrFeatureExist.Err) {
+			appendToFile(xl, errorFile, fmt.Sprintf("%s : %s", fj.imageURI, err.Error()))
+		}
+		xl.Infof("%s : %s\n", fj.imageURI, err.Error())
 	}
+
+	//no matter call service success or not, always write to process file
+	appendToFile(xl, processFile, md5)
 	return
 }
 
 func prepare() {
 	//1.create log dir if not exist
-	exist, err := pathExists(logPath)
-	if err != nil {
-		fmt.Printf("get directory [%s] error: %v\n", logPath, err)
-		panic(err)
-	}
-	if !exist {
-		fmt.Printf(fmt.Sprintf("no directory [%s]\n", logPath))
-		//create folder
-		err := os.Mkdir(logPath, os.ModePerm)
-		if err != nil {
-			fmt.Printf(fmt.Sprintf("create directory [%s] failed: %v\n", logPath, err))
-			panic(err)
-		} else {
-			fmt.Printf(fmt.Sprintf("create directory [%s] success\n", logPath))
-		}
-	}
+	createPath(xl, outputLogPath)
+	createPath(xl, processLogPath)
 
-	//2.read log file to get the last min&max stop point
+	//2.read process log file to get the last min stop point
 	var indexes []int
-	err = filepath.Walk(logPath, func(path string, f os.FileInfo, err error) error {
+	err := filepath.Walk(processLogPath, func(path string, f os.FileInfo, err error) error {
 		if f == nil {
 			return err
 		}
@@ -151,71 +127,66 @@ func prepare() {
 		return nil
 	})
 	if err != nil {
-		systemLog(fmt.Sprintf("error when filepath.Walk() on [%s]: %v", logPath, err))
-		panic(err)
+		xl.Fatalf("error when filepath.Walk() on [%s]: %v\n", processLogPath, err)
 	}
 	if indexes == nil {
 		lastMinIndex = 0
-		lastMaxIndex = 0
 	} else {
 		sort.Ints(indexes)
 		lastMinIndex = indexes[0]
-		lastMaxIndex = indexes[len(indexes)-1]
 	}
-	systemLogFile = logPath + "output"
-	errorListFile = logPath + "errorlist"
+
+	systemLogFile = outputLogPath + "output"
+	errorFile = outputLogPath + "errorlist"
+	processFile = processLogPath + "process"
+
+	//3. get the uploaded files' md5
+	md5Dict = map[string]struct{}{}
+	if file, err := os.Open(processFile); err == nil {
+		defer file.Close()
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			md5Dict[scanner.Text()] = struct{}{}
+		}
+	}
 }
 
-func loadFromURIList(ctx *context.Context, coll *mgo.Collection, faceFeature feature.FaceFeature) {
-	startTime := time.Now()
-
+func loadFromURIList(ctx *context.Context, faceGroup *faceGroup) {
 	file, err := os.Open(conf.ImageListFile)
 	if err != nil {
-		panic(err)
+		xl.Fatalf("error when reading image uri list file <%s>: %s\n", conf.ImageListFile, err)
 	}
 	defer file.Close()
 
+	startTime := time.Now()
 	scanner := bufio.NewScanner(file)
 	i := 0
 	for scanner.Scan() {
-		imageURL := scanner.Text()
+		imageURL := strings.TrimSpace(scanner.Text())
 
+		if imageURL == "" {
+			//skip empty line
+			continue
+		}
 		if i < lastMinIndex {
 			//this file is already handled in the last time, so skip it
 			continue
 		}
 
-		if i <= lastMaxIndex && lastMaxIndex > 0 {
-			//not sure this file is handled or not, check it. if exist, skip it
-			result := Face{}
-			if err = coll.Find(bson.M{"uri": imageURL}).One(&result); err == nil {
-				//no error => item found => file handled => we skip this file
-				systemLog(fmt.Sprintf("file %s is already handled during the previous run", imageURL))
-				continue
-			}
-			systemLog(fmt.Sprintf("file %s is not handled during the previous run, do it this time", imageURL))
-		}
-
 		wg.Add(1)
-		job := threadpool.Job{}
-		job.Param = []interface{}{&FaceJob{i, ctx, faceFeature, nil, imageURL, coll, &wg, 1}}
-		job.Fn = getFeatureAndSave
+		job := FaceJob{i, ctx, faceGroup, nil, imageURL, &wg}
 		jobPool <- job
 		i++
-	}
-
-	if err := scanner.Err(); err != nil {
-		panic(err)
 	}
 
 	wg.Wait()
 	close(jobPool)
 	elapsed := time.Since(startTime)
-	fmt.Println("Time elapsed: ", elapsed)
-	systemLog("finished!!!")
+	xl.Info("Time elapsed: ", elapsed)
+	xl.Info("finished!!!")
 }
 
-func loadFromFolder(ctx *context.Context, coll *mgo.Collection, faceFeature feature.FaceFeature) {
+func loadFromFolder(ctx *context.Context, faceGroup *faceGroup) {
 	startTime := time.Now()
 	i := -1
 	err := filepath.Walk(conf.ImageDirPath, func(path string, f os.FileInfo, err error) error {
@@ -230,7 +201,7 @@ func loadFromFolder(ctx *context.Context, coll *mgo.Collection, faceFeature feat
 
 		imageContent, err := ioutil.ReadFile(path)
 		if err != nil {
-			errorListLog(fmt.Sprintf("error when reading file %s: %s", path, err.Error()))
+			appendToFile(xl, errorFile, fmt.Sprintf("error when reading file %s: %s", path, err.Error()))
 			return nil
 		}
 
@@ -241,64 +212,35 @@ func loadFromFolder(ctx *context.Context, coll *mgo.Collection, faceFeature feat
 			return nil
 		}
 
-		if i <= lastMaxIndex && lastMaxIndex > 0 {
-			//not sure this file is handled or not, check it. if exist, skip it
-			result := Face{}
-			if err = coll.Find(bson.M{"uri": path}).One(&result); err == nil {
-				//no error => item found => file handled => we skip this file
-				systemLog(fmt.Sprintf("file %s is already handled during the previous run", path))
-				return nil
-			}
-			systemLog(fmt.Sprintf("file %s is not handled during the previous run, do it this time", path))
-		}
-
 		wg.Add(1)
-		job := threadpool.Job{}
-		job.Param = []interface{}{&FaceJob{i, ctx, faceFeature, imageContent, path, coll, &wg, 1}}
-		job.Fn = getFeatureAndSave
+		job := FaceJob{i, ctx, faceGroup, imageContent, path, &wg}
 		jobPool <- job
-
 		return nil
 	})
 	if err != nil {
-		systemLog(fmt.Sprintf("error when filepath.Walk() on [%s]: %v", conf.ImageDirPath, err))
-		panic(err)
+		xl.Fatalf("error when filepath.Walk() on [%s]: %v\n", conf.ImageDirPath, err)
 	}
 
 	wg.Wait()
 	close(jobPool)
 	elapsed := time.Since(startTime)
-	fmt.Println("Time elapsed: ", elapsed)
-	systemLog("finished!!!")
+	xl.Info("Time elapsed: ", elapsed)
+	xl.Info("finished!!!")
 }
 
 func main() {
-	//load config file
-	config.Init("f", "/dbstorage", "dbstorage.conf")
-	if err := config.Load(&conf); err != nil {
-		log.Fatal("Failed to load configure file")
-	}
-	fmt.Printf("configuration: %+v\n", conf)
-	logPath = conf.LogPath
-	faceFeature := feature.NewFaceFeature(conf.HTTPHost, time.Duration(conf.Timeout)*time.Millisecond, FEATURE_SIZE)
 	ctx := context.Background()
+	xl = xlog.FromContextSafe(ctx)
 
-	//connnect db
-	session, err := mgoutil.Dail(conf.DBConfig.Host, conf.DBConfig.Mode, conf.DBConfig.SyncTimeoutInS)
-	if err != nil {
-		panic(err)
+	//load config file
+	config.Init("f", "dbstorage", "dbstorage.conf")
+	if err := config.Load(&conf); err != nil {
+		xl.Fatalln("Failed to load configure file")
 	}
-	defer session.Close()
 
-	//ensure index
-	coll := session.DB(conf.DBConfig.DB).C(conf.DBCollection)
-	index := mgo.Index{
-		Key:    []string{"md5"},
-		Unique: true,
-	}
-	if err := coll.EnsureIndex(index); err != nil {
-		panic(err)
-	}
+	xl.Infof("configuration: %+v\n", conf)
+	outputLogPath = conf.LogPath
+	faceGroup := NewFaceGroup(conf.HTTPHost, time.Duration(conf.Timeout)*time.Millisecond)
 
 	//do preparation before import db
 	prepare()
@@ -306,19 +248,28 @@ func main() {
 	//initial thread pool
 	poolSize := conf.PoolSize
 	workerSize := conf.ThreadNumber
-	jobPool = make(chan threadpool.Job, poolSize)
-	dispatcher := threadpool.NewDispatcher(jobPool, workerSize)
+	jobPool = make(chan FaceJob, poolSize)
+	dispatcher := NewDispatcher(jobPool, workerSize)
 	dispatcher.Start()
 
-	if lastMinIndex == 0 && lastMaxIndex == 0 {
-		systemLog("start")
-	} else {
-		systemLog(fmt.Sprintf("continue, the previous stop points are from %d to %d", lastMinIndex, lastMaxIndex))
+	//create group if not exist
+	err := faceGroup.CreateGroup(ctx, conf.GroupName)
+	if err == nil {
+		xl.Infof("create group <%s> successful", conf.GroupName)
 	}
 
-	//load image from folder
-	//loadFromFolder(&ctx, coll, &faceFeature)
+	if lastMinIndex == 0 {
+		xl.Infof("start")
+	} else {
+		xl.Infof("continue from previous stop point: %d", lastMinIndex)
+	}
 
-	//load image from urlList
-	loadFromURIList(&ctx, coll, &faceFeature)
+	if conf.UseImageDirPath {
+		//load image from folder
+		loadFromFolder(&ctx, faceGroup)
+	} else {
+		//load image from uri list
+		loadFromURIList(&ctx, faceGroup)
+	}
+
 }
