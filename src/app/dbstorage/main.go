@@ -16,34 +16,40 @@ import (
 
 	xlog "github.com/qiniu/xlog.v1"
 	"qbox.us/cc/config"
-	"qiniu.com/ava/argus/feature_group_private/manager"
-	"qiniu.com/ava/argus/feature_group_private/proto"
+	"qiniu.com/argus/feature_group_private/manager"
+	"qiniu.com/argus/feature_group_private/proto"
 )
 
 var (
-	conf           Config
-	jobPool        chan FaceJob
-	lastMinIndex   int
-	wg             sync.WaitGroup
-	outputLogPath  string
-	systemLogFile  string
-	errorFile      string
-	processFile    string
-	md5Dict        map[string]struct{}
-	xl             *xlog.Logger
-	mutex          = &sync.Mutex{}
-	processLogPath = "./processlog/"
+	conf                  Config
+	jobPool               chan FaceJob
+	lastMinIndex          int
+	wg                    sync.WaitGroup
+	sha1Dict              map[string]struct{}
+	xl                    *xlog.Logger
+	dictMutex             = &sync.Mutex{}
+	sha1Mutex             = &sync.Mutex{}
+	countMutex            = &sync.Mutex{}
+	systemLogFile         string
+	errorFile             string
+	processFile           string
+	sha1File              string
+	count                 = 0
+	outputLogPath         = "./log/"
+	internalLogPath       = "./processlog/"
+	imageSourceFolderPath = "./source/"
+	imageSourceFile       = "./urlSource"
 )
 
 func (fj *FaceJob) execute(workerIndex int) {
+	defer fj.wg.Done()
 
 	//when start to handle a face, we save its index in file
-	writeToFile(xl, fmt.Sprintf(processLogPath+"%d.log", workerIndex), strconv.Itoa(fj.index))
-	defer fj.wg.Done()
+	writeToFile(xl, fmt.Sprintf(internalLogPath+"%d.log", workerIndex), strconv.Itoa(fj.index))
 
 	var err error
 
-	//if image content not passed, get it by url
+	//if image content not passed, try to get it by url
 	if fj.imageContent == nil {
 		for i := 0; i < conf.MaxTryDownloadTime; i++ {
 			fj.imageContent, err = downloadFile(fj.imageURI)
@@ -54,59 +60,64 @@ func (fj *FaceJob) execute(workerIndex int) {
 		if err != nil {
 			xl.Infof("%s : %s\n", fj.imageURI, err.Error())
 			appendToFile(xl, errorFile, fmt.Sprintf("%s : %s", fj.imageURI, err.Error()))
-			return
 		}
 	}
 
-	//check if this image exist
-	existed := false
-	md5 := getMd5(fj.imageContent)
-	mutex.Lock()
-	if _, ok := md5Dict[md5]; ok {
-		existed = true
-	} else {
-		md5Dict[md5] = struct{}{}
-	}
-	mutex.Unlock()
-
-	if existed {
-		//image exist, skip it
-		return
-	}
-
-	//call group_add service to store the image
-	imgBase64 := BASE64_PREFIX + base64.StdEncoding.EncodeToString(fj.imageContent)
-
-	for i := 0; i < conf.MaxTryServiceTime; i++ {
-		_, err = fj.faceGroup.Add(*fj.ctx, conf.GroupName, proto.FeatureID(fj.imageURI), proto.ImageURI(imgBase64))
-		if err == nil {
-			break
+	if fj.imageContent != nil {
+		//check if this image exist
+		existed := false
+		sha1 := getSha1(fj.imageContent)
+		dictMutex.Lock()
+		if _, ok := sha1Dict[sha1]; ok {
+			existed = true
+		} else {
+			sha1Dict[sha1] = struct{}{}
 		}
-	}
+		dictMutex.Unlock()
 
-	if err != nil {
-		errMsg := err.Error()
-		if strings.Contains(errMsg, manager.ErrGroupNotExist.Err) {
-			xl.Fatalf("group <%s> not exist\n", conf.GroupName)
-		} else if !strings.Contains(errMsg, manager.ErrFeatureExist.Err) {
-			appendToFile(xl, errorFile, fmt.Sprintf("%s : %s", fj.imageURI, err.Error()))
+		if !existed {
+			//call group_add service to store the image
+			imgBase64 := BASE64_PREFIX + base64.StdEncoding.EncodeToString(fj.imageContent)
+
+			for i := 0; i < conf.MaxTryServiceTime; i++ {
+				_, err = fj.faceGroup.Add(*fj.ctx, conf.GroupName, proto.FeatureID(fj.imageURI), proto.ImageURI(imgBase64), fj.tag, fj.desc)
+				if err == nil {
+					break
+				}
+			}
+
+			if err != nil {
+				errMsg := err.Error()
+				if strings.Contains(errMsg, manager.ErrGroupNotExist.Err) {
+					xl.Fatalf("group <%s> not exist\n", conf.GroupName)
+				} else if !strings.Contains(errMsg, manager.ErrFeatureExist.Err) {
+					appendToFile(xl, errorFile, fmt.Sprintf("%s : %s", fj.imageURI, err.Error()))
+				}
+				xl.Infof("%s : %s\n", fj.imageURI, err.Error())
+			}
 		}
-		xl.Infof("%s : %s\n", fj.imageURI, err.Error())
+
+		//no matter call service success or not, always write to sha1 file
+		sha1Mutex.Lock()
+		appendToFile(xl, sha1File, sha1)
+		sha1Mutex.Unlock()
 	}
 
-	//no matter call service success or not, always write to process file
-	appendToFile(xl, processFile, md5)
-	return
+	//after handling an image, update the count & save to file
+	countMutex.Lock()
+	count++
+	writeToFile(xl, processFile, fmt.Sprintf("%d\n", count))
+	countMutex.Unlock()
 }
 
 func prepare() {
 	//1.create log dir if not exist
 	createPath(xl, outputLogPath)
-	createPath(xl, processLogPath)
+	createPath(xl, internalLogPath)
 
 	//2.read process log file to get the last min stop point
 	var indexes []int
-	err := filepath.Walk(processLogPath, func(path string, f os.FileInfo, err error) error {
+	err := filepath.Walk(internalLogPath, func(path string, f os.FileInfo, err error) error {
 		if f == nil {
 			return err
 		}
@@ -127,7 +138,7 @@ func prepare() {
 		return nil
 	})
 	if err != nil {
-		xl.Fatalf("error when filepath.Walk() on [%s]: %v\n", processLogPath, err)
+		xl.Fatalf("error when filepath.Walk() on [%s]: %v\n", internalLogPath, err)
 	}
 	if indexes == nil {
 		lastMinIndex = 0
@@ -138,23 +149,24 @@ func prepare() {
 
 	systemLogFile = outputLogPath + "output"
 	errorFile = outputLogPath + "errorlist"
-	processFile = processLogPath + "process"
+	processFile = outputLogPath + "process"
+	sha1File = internalLogPath + "sha1"
 
-	//3. get the uploaded files' md5
-	md5Dict = map[string]struct{}{}
-	if file, err := os.Open(processFile); err == nil {
+	//3. get the uploaded files' sha1
+	sha1Dict = map[string]struct{}{}
+	if file, err := os.Open(sha1File); err == nil {
 		defer file.Close()
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
-			md5Dict[scanner.Text()] = struct{}{}
+			sha1Dict[scanner.Text()] = struct{}{}
 		}
 	}
 }
 
-func loadFromURIList(ctx *context.Context, faceGroup *faceGroup) {
-	file, err := os.Open(conf.ImageListFile)
+func loadFromFile(ctx *context.Context, faceGroup *faceGroup) {
+	file, err := os.Open(imageSourceFile)
 	if err != nil {
-		xl.Fatalf("error when reading image uri list file <%s>: %s\n", conf.ImageListFile, err)
+		xl.Fatalf("error when reading image uri list file <%s>: %s\n", imageSourceFile, err)
 	}
 	defer file.Close()
 
@@ -170,15 +182,24 @@ func loadFromURIList(ctx *context.Context, faceGroup *faceGroup) {
 		}
 		if i < lastMinIndex {
 			//this file is already handled in the last time, so skip it
+			countMutex.Lock()
+			count++
+			countMutex.Unlock()
+			i++
 			continue
 		}
 
 		wg.Add(1)
-		job := FaceJob{i, ctx, faceGroup, nil, imageURL, &wg}
+		job := FaceJob{
+			index:     i,
+			ctx:       ctx,
+			faceGroup: faceGroup,
+			imageURI:  imageURL,
+			wg:        &wg,
+		}
 		jobPool <- job
 		i++
 	}
-
 	wg.Wait()
 	close(jobPool)
 	elapsed := time.Since(startTime)
@@ -189,7 +210,7 @@ func loadFromURIList(ctx *context.Context, faceGroup *faceGroup) {
 func loadFromFolder(ctx *context.Context, faceGroup *faceGroup) {
 	startTime := time.Now()
 	i := -1
-	err := filepath.Walk(conf.ImageDirPath, func(path string, f os.FileInfo, err error) error {
+	err := filepath.Walk(imageSourceFolderPath, func(path string, f os.FileInfo, err error) error {
 		if f == nil {
 			return err
 		}
@@ -209,16 +230,29 @@ func loadFromFolder(ctx *context.Context, faceGroup *faceGroup) {
 		i++
 		if i < lastMinIndex {
 			//this file is already handled in the last time, so skip it
+			countMutex.Lock()
+			count++
+			countMutex.Unlock()
 			return nil
 		}
 
+		tag, desc := getTagAndDesc(f.Name())
 		wg.Add(1)
-		job := FaceJob{i, ctx, faceGroup, imageContent, path, &wg}
+		job := FaceJob{
+			index:        i,
+			ctx:          ctx,
+			faceGroup:    faceGroup,
+			imageContent: imageContent,
+			imageURI:     path,
+			tag:          proto.FeatureTag(tag),
+			desc:         proto.FeatureDesc(desc),
+			wg:           &wg,
+		}
 		jobPool <- job
 		return nil
 	})
 	if err != nil {
-		xl.Fatalf("error when filepath.Walk() on [%s]: %v\n", conf.ImageDirPath, err)
+		xl.Fatalf("error when filepath.Walk() on [%s]: %v\n", imageSourceFolderPath, err)
 	}
 
 	wg.Wait()
@@ -239,8 +273,15 @@ func main() {
 	}
 
 	xl.Infof("configuration: %+v\n", conf)
-	outputLogPath = conf.LogPath
-	faceGroup := NewFaceGroup(conf.HTTPHost, time.Duration(conf.Timeout)*time.Millisecond)
+
+	if conf.ImageFolderPath != "" {
+		imageSourceFolderPath = conf.ImageFolderPath
+	}
+	if conf.ImageListFile != "" {
+		imageSourceFile = conf.ImageListFile
+	}
+
+	faceGroup := NewFaceGroup(conf.ServiceHost, time.Duration(conf.Timeout)*time.Millisecond)
 
 	//do preparation before import db
 	prepare()
@@ -264,12 +305,12 @@ func main() {
 		xl.Infof("continue from previous stop point: %d", lastMinIndex)
 	}
 
-	if conf.UseImageDirPath {
+	if conf.LoadImageFromFolder {
 		//load image from folder
 		loadFromFolder(&ctx, faceGroup)
 	} else {
-		//load image from uri list
-		loadFromURIList(&ctx, faceGroup)
+		//load image from uri list file
+		loadFromFile(&ctx, faceGroup)
 	}
 
 }

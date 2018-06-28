@@ -2,20 +2,21 @@ package main
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 	xlog "github.com/qiniu/xlog.v1"
-	"qiniu.com/ava/argus/facec/client"
-	"qiniu.com/ava/argus/feature_group_private/proto"
+	"qiniu.com/argus/argus/facec/client"
+	"qiniu.com/argus/feature_group_private/proto"
 )
 
 const (
@@ -23,17 +24,16 @@ const (
 )
 
 type Config struct {
-	LogPath            string `json:"log_path"`
-	ImageDirPath       string `json:"image_dir_path"`
-	ImageListFile      string `json:"image_list_file"`
-	UseImageDirPath    bool   `json:"use_image_dir_path"`
-	HTTPHost           string `json:"qiniu_host_url"`
-	Timeout            int    `json:"http_timeout_in_millisecond"`
-	MaxTryServiceTime  int    `json:"max_try_service_time"`
-	MaxTryDownloadTime int    `json:"max_try_download_time"`
-	ThreadNumber       int    `json:"thread_number"`
-	PoolSize           int    `json:"job_pool_size"`
-	GroupName          string `json:"group_name"`
+	ImageFolderPath     string `json:"image_folder_path"`
+	ImageListFile       string `json:"image_list_file"`
+	LoadImageFromFolder bool   `json:"load_image_from_folder"`
+	ServiceHost         string `json:"service_host_url"`
+	Timeout             int    `json:"http_timeout_in_millisecond"`
+	MaxTryServiceTime   int    `json:"max_try_service_time"`
+	MaxTryDownloadTime  int    `json:"max_try_download_time"`
+	ThreadNumber        int    `json:"thread_number"`
+	PoolSize            int    `json:"job_pool_size"`
+	GroupName           string `json:"group_name"`
 }
 
 type FaceJob struct {
@@ -42,6 +42,8 @@ type FaceJob struct {
 	faceGroup    *faceGroup
 	imageContent []byte
 	imageURI     string
+	tag          proto.FeatureTag
+	desc         proto.FeatureDesc
 	wg           *sync.WaitGroup
 }
 
@@ -57,14 +59,14 @@ func NewFaceGroup(host string, timeout time.Duration) *faceGroup {
 	}
 }
 
-func (fg *faceGroup) Add(ctx context.Context, groupName string, id proto.FeatureID, uri proto.ImageURI) (respID proto.FeatureID, err error) {
+func (fg *faceGroup) Add(ctx context.Context, groupName string, id proto.FeatureID, uri proto.ImageURI, tag proto.FeatureTag, desc proto.FeatureDesc) (respID proto.FeatureID, err error) {
 	cli := client.NewRPCClient(client.EvalEnv{Uid: 1, Utype: 0}, fg.timeout)
 
 	if len(uri) == 0 {
 		return "", errors.New("image do not contain any data")
 	}
 
-	req := map[string]interface{}{"image": map[string]string{"id": string(id), "uri": string(uri)}}
+	req := map[string]interface{}{"image": map[string]string{"id": string(id), "uri": string(uri), "tag": string(tag), "desc": string(desc)}}
 
 	resp, err := cli.DoRequestWithJson(ctx, "POST", fg.host+"/v1/face/groups/"+groupName+"/add", req)
 	if err != nil {
@@ -181,8 +183,8 @@ func createPath(log *xlog.Logger, path string) {
 	}
 }
 
-func getMd5(data []byte) string {
-	h := md5.New()
+func getSha1(data []byte) string {
+	h := sha1.New()
 	h.Write(data)
 	cipherStr := h.Sum(nil)
 	return hex.EncodeToString(cipherStr)
@@ -219,4 +221,18 @@ func downloadFile(url string) (content []byte, err error) {
 		return nil, errors.Wrapf(err, fmt.Sprintf("error when trying to read the content of image : %s", url))
 	}
 	return content, nil
+}
+
+func getTagAndDesc(name string) (tag, desc string) {
+	if name != "" {
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[0:i]
+		}
+		blocks := strings.SplitN(name, "_", 2)
+		if len(blocks) == 1 {
+			return blocks[0], ""
+		}
+		return blocks[0], blocks[1]
+	}
+	return "", ""
 }

@@ -1,56 +1,44 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
-	"log"
 	"os"
-	"path/filepath"
-	"strings"
 )
 
+type CsvLine struct {
+	Column1 string
+	Column2 string
+	Column3 string
+}
+
 func main() {
-	fmt.Println("hello ning1111111!")
-}
 
-func main1() {
-	file, err := os.OpenFile("/Users/zhaoning/Desktop/imageList", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	filename := "/Users/zhaoning/Desktop/Book1.csv"
+
+	// Open CSV file
+	f, err := os.Open(filename)
 	if err != nil {
-		log.Fatalln(err)
+		panic(err)
 	}
-	defer file.Close()
+	defer f.Close()
 
-	err = filepath.Walk("/Users/zhaoning/Documents/tomcatimage", func(path string, f os.FileInfo, err error) error {
-		if f == nil {
-			return err
-		}
-
-		//skip directory & windows thumb file & linux max hidden file
-		if f.IsDir() || strings.ToLower(f.Name()) == "thumb.db" || substring(f.Name(), 0, 1) == "." {
-			return nil
-		}
-
-		content := fmt.Sprintf("http://localhost:8080/test/%s\n", f.Name())
-		buf := []byte(content)
-		file.Write(buf)
-		return nil
-	})
+	// Read File into a Variable
+	lines, err := csv.NewReader(f).ReadAll()
 	if err != nil {
-		fmt.Println(err)
+		panic(err)
 	}
 
-}
-
-func substring(source string, start int, end int) string {
-	var r = []rune(source)
-	length := len(r)
-
-	if start < 0 || end > length || start > end {
-		return ""
+	// Loop through lines & turn into object
+	for _, line := range lines {
+		data := CsvLine{
+			Column1: line[0],
+			Column2: line[1],
+			Column3: line[2],
+		}
+		if data.Column1 == " aaa" {
+			fmt.Println("hello")
+		}
+		fmt.Println(data.Column1, data.Column2, data.Column3)
 	}
-
-	if start == 0 && end == length {
-		return source
-	}
-
-	return string(r[start:end])
 }
