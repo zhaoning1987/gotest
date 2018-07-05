@@ -10,7 +10,7 @@
   - [1.5 获得任务](#15-%E8%8E%B7%E5%BE%97%E4%BB%BB%E5%8A%A1)
   - [1.6 查询任务信息](#16-%E6%9F%A5%E8%AF%A2%E4%BB%BB%E5%8A%A1%E4%BF%A1%E6%81%AF)
   - [1.7 查询任务日志](#17-%E6%9F%A5%E8%AF%A2%E4%BB%BB%E5%8A%A1%E6%97%A5%E5%BF%97)
-  - [1.7 下载任务日志](#17-%E4%B8%8B%E8%BD%BD%E4%BB%BB%E5%8A%A1%E6%97%A5%E5%BF%97)
+  - [1.8 下载任务日志](#18-%E4%B8%8B%E8%BD%BD%E4%BB%BB%E5%8A%A1%E6%97%A5%E5%BF%97)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -291,7 +291,7 @@ Content-Type: application/json
 | 303   | 系统错误  |
 
 
-## 1.7 下载任务日志
+## 1.8 下载任务日志
 
 **待定，看了源码，貌似restrpc框架不能很好的支持下载，直接操作response.Writer的话，框架依然会在末尾带上一个空json"{}"**
 
