@@ -81,7 +81,7 @@ Content-Type: application/json
 **Request**
 
 ```
-POST /v1/tasks/<task_id>/start
+GET /v1/tasks/<task_id>/start
 ```
 
 **Response**
@@ -106,7 +106,7 @@ POST /v1/tasks/<task_id>/start
 **Request**
 
 ```
-POST /v1/tasks/<task_id>/stop
+GET /v1/tasks/<task_id>/stop
 ```
 
 **Response**
@@ -129,7 +129,7 @@ POST /v1/tasks/<task_id>/stop
 **Request**
 
 ```
-POST /v1/tasks/<task_id>/delete
+GET /v1/tasks/<task_id>/delete
 ```
 
 **Response**
@@ -152,8 +152,13 @@ POST /v1/tasks/<task_id>/delete
 **Request**
 
 ```
-GET /v1/tasks/list?group=<group_name>&status=<status>
+POST /v1/tasks/list
 Content-Type: application/json
+
+{
+    "group_name": ""
+    "status": ""
+}
 ```
 
 **Response**
@@ -176,7 +181,7 @@ Content-Type: application/json
 | 字段       | 取值   | 说明                |
 | :-----     | :----- | :-----------------|
 | group_name | string | 人脸库group名，必选      |
-| status     | string | 只查询指定状态的任务，可选 |
+| status     | int    | 只查询指定状态的任务，可选，默认为0（即查找所有）  |
 | ids.[]     | string | 入库任务的id        |
 
 
@@ -209,7 +214,7 @@ Content-Type: application/json
     },
     "total_num" : "",
     "handled_num": ""
-    "status": ""
+    "state": ""
     "last_error": ""
 }
 ```
@@ -228,7 +233,7 @@ Content-Type: application/json
 | config.thread_num  | int    | 配置的线程数 |
 | total_num          | int    | 该任务一共需要处理的人脸数 |
 | handled_num        | int    | 该任务当前已处理完的人脸数 |
-| status             | int    | 该任务当前状态，1为已创建未执行，2为正在执行中，3为已停止，4为已完成 |
+| state              | int    | 该任务当前状态，1为已创建未执行，2为正在执行中，3为已停止，4为已完成 |
 | last_error         | string | 当入库模式为出错即停止时，该字段返回造成停止的人脸图片信息即错误原因 |
 
 

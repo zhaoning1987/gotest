@@ -1,26 +1,28 @@
-package main
+package dbstorage
 
 import (
-	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pkg/errors"
 	xlog "github.com/qiniu/xlog.v1"
-	"qiniu.com/argus/argus/facec/client"
-	"qiniu.com/argus/feature_group_private/proto"
 )
 
 const (
 	BASE64_PREFIX = "data:application/octet-stream;base64,"
+)
+
+type Mode int
+
+const (
+	REPLACE Mode = iota
+	APPEND
 )
 
 type Config struct {
@@ -36,123 +38,103 @@ type Config struct {
 	GroupName           string `json:"group_name"`
 }
 
-type FaceJob struct {
-	index        int
-	ctx          *context.Context
-	faceGroup    *faceGroup
-	imageContent []byte
-	imageURI     string
-	tag          proto.FeatureTag
-	desc         proto.FeatureDesc
-	wg           *sync.WaitGroup
+type SafeMap struct {
+	Map   map[string]struct{}
+	Mutex sync.Mutex
 }
 
-type faceGroup struct {
-	host    string
-	timeout time.Duration
+func NewSafeMap() *SafeMap {
+	return &SafeMap{Map: make(map[string]struct{}, 0)}
 }
 
-func NewFaceGroup(host string, timeout time.Duration) *faceGroup {
-	return &faceGroup{
-		host:    host,
-		timeout: timeout,
-	}
+type SafeFile struct {
+	File     *os.File
+	Path     string
+	EditMode Mode
+	NeedLock bool
+	Mutex    sync.Mutex
 }
 
-func (fg *faceGroup) Add(ctx context.Context, groupName string, id proto.FeatureID, uri proto.ImageURI, tag proto.FeatureTag, desc proto.FeatureDesc) (respID proto.FeatureID, err error) {
-	cli := client.NewRPCClient(client.EvalEnv{Uid: 1, Utype: 0}, fg.timeout)
-
-	if len(uri) == 0 {
-		return "", errors.New("image do not contain any data")
+func NewSafeFile(path string, mode Mode, needLock bool) (sf *SafeFile, err error) {
+	var f *os.File
+	if mode == APPEND {
+		f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	}
-
-	req := map[string]interface{}{"image": map[string]string{"id": string(id), "uri": string(uri), "tag": string(tag), "desc": string(desc)}}
-
-	resp, err := cli.DoRequestWithJson(ctx, "POST", fg.host+"/v1/face/groups/"+groupName+"/add", req)
 	if err != nil {
-		return "", errors.Wrap(err, "request to PostGroup_Add failed")
+		return nil, err
 	}
-	defer resp.Body.Close()
-	content, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", errors.Wrap(err, "read PostGroup_Add response failed")
-	}
-
-	if resp.StatusCode/100 != 2 {
-		return "", errors.Errorf("PostGroup_Add return error: %s", string(content))
-	}
-
-	result := struct {
-		ID proto.FeatureID `json:"id"`
-	}{}
-	err = json.Unmarshal(content, &result)
-	if err != nil {
-		return "", errors.Wrapf(err, "parse PostGroup_Add response failed, response body is: %s", string(content))
-	}
-
-	return result.ID, nil
+	return &SafeFile{
+		File:     f,
+		Path:     path,
+		EditMode: mode,
+		NeedLock: needLock,
+	}, nil
 }
 
-func (fg *faceGroup) CreateGroup(ctx context.Context, groupName string) error {
-	cli := client.NewRPCClient(client.EvalEnv{Uid: 1, Utype: 0}, fg.timeout)
-
-	req := map[string]interface{}{"config": map[string]int{"capacity": 100000000}}
-
-	resp, err := cli.DoRequestWithJson(ctx, "POST", fg.host+"/v1/face/groups/"+groupName, req)
-	if err != nil {
-		return errors.Wrap(err, "request to PostGroup_ failed")
-	}
-	defer resp.Body.Close()
-	content, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return errors.Wrap(err, "read PostGroup_ response failed")
-	}
-
-	if resp.StatusCode/100 != 2 {
-		return errors.Errorf("PostGroup_ return error: %s", string(content))
-	}
-
-	return nil
-}
-
-func (fg *faceGroup) Delete(ctx context.Context, groupName string, id ...proto.FeatureID) error {
-	cli := client.NewRPCClient(client.EvalEnv{Uid: 1, Utype: 0}, fg.timeout)
-
-	req := map[string]interface{}{"ids": id}
-
-	resp, err := cli.DoRequestWithJson(ctx, "POST", fg.host+"/v1/face/groups/"+groupName+"/delete", req)
-	if err != nil {
-		return errors.Wrap(err, "request to PostGroup_Delete failed")
-	}
-	defer resp.Body.Close()
-	content, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return errors.Wrap(err, "read PostGroup_Delete response failed")
-	}
-
-	if resp.StatusCode/100 != 2 {
-		return errors.Errorf("PostGroup_Delete return error: %s", string(content))
-	}
-
-	return nil
-}
-
-func writeToFile(log *xlog.Logger, path string, msg string) {
-	err := ioutil.WriteFile(path, []byte(msg), 0644)
-	if err != nil {
-		log.Fatalln(err)
+func (f *SafeFile) Close() {
+	if f.File != nil {
+		f.File.Close()
 	}
 }
 
-func appendToFile(log *xlog.Logger, path string, msg string) {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		log.Fatalln(err)
+func (f *SafeFile) Write(msg string) (err error) {
+	if f.NeedLock {
+		f.Mutex.Lock()
+		defer f.Mutex.Unlock()
 	}
-	defer f.Close()
-	content := fmt.Sprintf("%s\n", msg)
-	buf := []byte(content)
-	f.Write(buf)
+	if f.EditMode == APPEND {
+		content := fmt.Sprintf("%s\n", msg)
+		_, err = f.File.Write([]byte(content))
+	} else {
+		err = ioutil.WriteFile(f.Path, []byte(msg), 0644)
+	}
+	return
+}
+
+func CreatePath(log *xlog.Logger, path string) {
+	exist, err := pathExists(path)
+	if err != nil {
+		log.Fatalf("get directory [%s] error: %v\n", path, err)
+	}
+	if !exist {
+		log.Infof("no directory [%s]\n", path)
+		//create folder
+		err := os.Mkdir(path, os.ModePerm)
+		if err != nil {
+			log.Fatalf("create directory [%s] failed: %v\n", path, err)
+		} else {
+			log.Infof("create directory [%s] success\n", path)
+		}
+	}
+}
+
+func Substring(source string, start int, end int) string {
+	var r = []rune(source)
+	length := len(r)
+
+	if start < 0 || end > length || start > end {
+		return ""
+	}
+
+	if start == 0 && end == length {
+		return source
+	}
+
+	return string(r[start:end])
+}
+
+func GetTagAndDesc(name string) (tag, desc string) {
+	if name != "" {
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[0:i]
+		}
+		blocks := strings.SplitN(name, "_", 2)
+		if len(blocks) == 1 {
+			return blocks[0], ""
+		}
+		return blocks[0], blocks[1]
+	}
+	return "", ""
 }
 
 func pathExists(path string) (bool, error) {
@@ -166,43 +148,11 @@ func pathExists(path string) (bool, error) {
 	return false, err
 }
 
-func createPath(log *xlog.Logger, path string) {
-	exist, err := pathExists(path)
-	if err != nil {
-		xl.Fatalf("get directory [%s] error: %v\n", path, err)
-	}
-	if !exist {
-		xl.Infof("no directory [%s]\n", path)
-		//create folder
-		err := os.Mkdir(path, os.ModePerm)
-		if err != nil {
-			xl.Fatalf("create directory [%s] failed: %v\n", path, err)
-		} else {
-			xl.Infof("create directory [%s] success\n", path)
-		}
-	}
-}
-
 func getSha1(data []byte) string {
 	h := sha1.New()
 	h.Write(data)
 	cipherStr := h.Sum(nil)
 	return hex.EncodeToString(cipherStr)
-}
-
-func substring(source string, start int, end int) string {
-	var r = []rune(source)
-	length := len(r)
-
-	if start < 0 || end > length || start > end {
-		return ""
-	}
-
-	if start == 0 && end == length {
-		return source
-	}
-
-	return string(r[start:end])
 }
 
 func downloadFile(url string) (content []byte, err error) {
@@ -221,18 +171,4 @@ func downloadFile(url string) (content []byte, err error) {
 		return nil, errors.Wrapf(err, fmt.Sprintf("error when trying to read the content of image : %s", url))
 	}
 	return content, nil
-}
-
-func getTagAndDesc(name string) (tag, desc string) {
-	if name != "" {
-		if i := strings.LastIndex(name, "."); i >= 0 {
-			name = name[0:i]
-		}
-		blocks := strings.SplitN(name, "_", 2)
-		if len(blocks) == 1 {
-			return blocks[0], ""
-		}
-		return blocks[0], blocks[1]
-	}
-	return "", ""
 }

@@ -1,4 +1,4 @@
-package dbstorage
+package main
 
 var (
 	defaultMaxWorker = 10
