@@ -147,7 +147,7 @@ POST /v1/tasks/<task_id>/delete
 
 ## 1.5 获得任务
 
-> 基于人脸库group名，获得属于该group下所有task的id
+> 获得任务的id，查询时可指定人脸库和任务状态
 
 **Request**
 
@@ -175,7 +175,7 @@ Content-Type: application/json
 
 | 字段       | 取值   | 说明                |
 | :-----     | :----- | :-----------------|
-| group_name | string | 人脸库group名，必选      |
+| group_name | string | 查询指定的人脸库，可选      |
 | status     | string | 只查询指定状态的任务，可选 |
 | ids.[]     | string | 入库任务的id        |
 
