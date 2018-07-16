@@ -11,7 +11,7 @@ type person struct {
 	Val string
 }
 
-func main() {
+func main3() {
 	bb := "中国"
 	aa := substring(bb, 1, 2)
 	fmt.Println(aa)

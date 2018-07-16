@@ -6,10 +6,11 @@ import (
 	"runtime"
 	"runtime/debug"
 
+	"app/aatest/service"
+
 	"github.com/qiniu/http/restrpc.v1"
 	"github.com/qiniu/http/servestk.v1"
 	"github.com/qiniu/log.v1"
-	"qiniu.com/argus/aatest/service"
 )
 
 var (

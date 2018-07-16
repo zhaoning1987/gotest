@@ -1,20 +1,30 @@
 package main
 
-import (
-	"fmt"
-)
+import "os"
 
-type bb struct {
-	s   string
-	b   bool
-	i   int
-	Map map[string]struct{}
+type abc struct {
+	aa string
+	bb string
 }
 
-func (b *bb) print() {
-	fmt.Println(b.s, b.b, b.i, b.Map)
+func (a abc) String() string {
+	return "ssss"
 }
+
 func main() {
-	var test bb
-	test.print()
+
+	_, err := os.OpenFile("/Users/zhaoning/Desktop/bbbb", os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = os.OpenFile("/Users/zhaoning/Desktop/bbbb", os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = os.OpenFile("/Users/zhaoning/Desktop/bbbb", os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		panic(err)
+	}
 }

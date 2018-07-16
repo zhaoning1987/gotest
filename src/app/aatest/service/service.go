@@ -19,7 +19,7 @@ type ITestService interface {
 			File    io.ReadCloser "abc"
 		},
 		*restrpc.Env,
-	) (*ret, error)
+	)
 }
 
 // type ITestService interface {

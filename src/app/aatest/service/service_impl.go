@@ -47,12 +47,15 @@ func (s *TestService) GetTest_(ctx context.Context,
 		File    io.ReadCloser "abc"
 	},
 	env *restrpc.Env,
-) (*ret, error) {
+) {
 	// env.W.Header().Set("Content-Disposition", "attachment;fileName="+"a.txt")
 
 	// env.W.Write([]byte("zhao ning"))
+
+	env.W.WriteHeader(999)
+	env.W.Write([]byte("wwwww ww"))
 	// body := ioutil.NopCloser(bytes.NewReader([]byte("zhao ning")))
-	return &ret{}, nil
+	// return &ret{}, nil
 	// return errors.New("invalid arguments")
 	// return httputil.NewError(403, "hello")
 	// return httputil.NewRpcError(301, 100, "", "www")

@@ -110,7 +110,7 @@ func httpDo() {
 	fmt.Println(string(body))
 }
 
-func main() {
+func main1() {
 	// httpDo()
 
 	//========= image-feature

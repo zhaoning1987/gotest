@@ -10,7 +10,7 @@ import (
 
 var dbConfig = mgoutil.Config{
 	Host:           "localhost:27017",
-	DB:             "test1",
+	DB:             "test134",
 	Mode:           "strong",
 	SyncTimeoutInS: 1,
 }
@@ -57,4 +57,9 @@ func main() {
 	// }
 
 	fmt.Println("result:", results)
+
+	_, err = coll.RemoveAll(bson.M{"name": "zhao"})
+	if err != nil {
+		log.Fatal(err)
+	}
 }
