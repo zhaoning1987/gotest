@@ -23,4 +23,7 @@ func main() {
 
 	wg.Wait()
 	fmt.Println(count)
+
+	fmt.Println("test1")
+	fmt.Println("test2")
 }
