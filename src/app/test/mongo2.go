@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"sync"
+	"sync/atomic"
 
 	mgoutil "github.com/qiniu/db/mgoutil.v3"
 	"gopkg.in/mgo.v2/bson"
@@ -19,7 +21,8 @@ var dbConfig3 = mgoutil.Config{
 type Person struct {
 	// ID    bson.ObjectId `bson:"_id"`
 	Name  string   //`bson:"x"`
-	Phone []string //`bson:"k"`
+	Phone []string //`bson:"k"`'
+	Count int
 }
 
 func main() {
@@ -37,8 +40,8 @@ func main() {
 	// session.SetMode(mgo.Monotonic, true) //读模式，与副本集有关，详情参考https://docs.mongodb.com/manual/reference/read-preference/ & https://docs.mongodb.com/manual/replication/
 
 	// c := session.DB("test").C("ning")
-	err = coll.Insert(&Person{"ning", []string{"+55 53 8116 9639", "sdfsdf"}},
-		&Person{"zhao", []string{"+55 53 8116 9639", "wwwwwww"}})
+	err = coll.Insert(&Person{"ning", []string{"+55 53 8116 9639", "sdfsdf"}, 0},
+		&Person{"zhao", []string{"+55 53 8116 9639", "wwwwwww"}, 0})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -73,5 +76,33 @@ func main() {
 	// } else {
 	// 	fmt.Println("Phone:", result)
 	// }
+
+	err = coll.Insert(&Person{"concurrTest", []string{}, 0})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var count int64
+	count = 0
+	// var lock sync.Mutex
+	var wg sync.WaitGroup
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func(i int) {
+			// count++
+			// lock.Lock()
+			count = atomic.AddInt64(&count, 1)
+			// count++
+			// count++
+			coll.Update(bson.M{"name": "concurrTest"},
+				bson.M{"$set": bson.M{"count": count}})
+			// lock.Unlock()
+			wg.Done()
+
+		}(i)
+	}
+
+	wg.Wait()
+	fmt.Println(count)
 
 }

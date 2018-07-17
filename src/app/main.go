@@ -1,30 +1,26 @@
 package main
 
-import "os"
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
 
-type abc struct {
-	aa string
-	bb string
+func change(i int) {
+	i = 3
 }
-
-func (a abc) String() string {
-	return "ssss"
-}
-
 func main() {
-
-	_, err := os.OpenFile("/Users/zhaoning/Desktop/bbbb", os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		panic(err)
+	var count int64
+	count = 0
+	var wg sync.WaitGroup
+	for i := 0; i < 1000000; i++ {
+		wg.Add(1)
+		go func() {
+			atomic.AddInt64(&count, 1)
+			wg.Done()
+		}()
 	}
 
-	_, err = os.OpenFile("/Users/zhaoning/Desktop/bbbb", os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		panic(err)
-	}
-
-	_, err = os.OpenFile("/Users/zhaoning/Desktop/bbbb", os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		panic(err)
-	}
+	wg.Wait()
+	fmt.Println(count)
 }

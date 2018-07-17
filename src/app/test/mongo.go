@@ -45,7 +45,7 @@ func main() {
 
 	// result := Person{}
 	var results []Person
-	err = coll.Find(bson.M{"name": "n2ing"}).All(&results) //如果查询失败，返回“not found”
+	err = coll.Find(bson.M{"name": "ning"}).All(&results) //如果查询失败，返回“not found”
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -58,7 +58,8 @@ func main() {
 
 	fmt.Println("result:", results)
 
-	_, err = coll.RemoveAll(bson.M{"name": "zhao"})
+	condition := []string{}
+	_, err = coll.UpdateAll(bson.M{"name": bson.M{"$in": condition}}, bson.M{"$set": bson.M{"name": "hahaha"}})
 	if err != nil {
 		log.Fatal(err)
 	}
