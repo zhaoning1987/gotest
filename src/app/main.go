@@ -2,28 +2,29 @@ package main
 
 import (
 	"fmt"
-	"sync"
-	"sync/atomic"
 )
 
-func change(i int) {
-	i = 3
+type stru struct {
+	str string
 }
+
+type stru2 struct {
+	stru
+	str string
+}
+
 func main() {
-	var count int64
-	count = 0
-	var wg sync.WaitGroup
-	for i := 0; i < 1000000; i++ {
-		wg.Add(1)
-		go func() {
-			atomic.AddInt64(&count, 1)
-			wg.Done()
-		}()
-	}
+	a := " "
+	fmt.Println(len(a))
+}
 
-	wg.Wait()
-	fmt.Println(count)
+func test1() (res stru) {
+	res = *test()
+	return
+}
 
-	fmt.Println("test1")
-	fmt.Println("test2")
+func test() (res *stru) {
+	res = &stru{}
+	res.str = "aa"
+	return
 }
