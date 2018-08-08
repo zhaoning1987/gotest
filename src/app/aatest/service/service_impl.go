@@ -2,12 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/qiniu/http/restrpc.v1"
 )
-
-var _ ITestService = new(TestService)
 
 type TestService struct {
 }
@@ -29,6 +28,7 @@ func (e *CustomError) Error() string {
 // func (e *CustomError) RpcError() string {
 // 	return e.code + "||" + e.msg
 // }
+var _ ITestService = new(TestService)
 
 func NewTestService() (ITestService, error) {
 	s := &TestService{}
@@ -40,20 +40,49 @@ type ret struct {
 	B string
 }
 
-func (s *TestService) GetTest_(ctx context.Context,
+type Resp struct {
+	Test string      `json:"test"`
+	PPP  interface{} `json:"meta"`
+}
+
+func (s *TestService) PostGet_(ctx context.Context,
 	args *struct {
 		CmdArgs []string
-		Par1    string        "par1"
-		File    io.ReadCloser "abc"
+		// Param1  Parameter `json:"param1"`
+	},
+	env *restrpc.Env,
+) (res Resp, err error) {
+	fmt.Println("sfdd")
+	result := get(args.CmdArgs[0])
+	res.Test = result.Name
+	res.PPP = result.Param2
+	return
+}
+
+func (s *TestService) PostSet_(ctx context.Context,
+	args *struct {
+		CmdArgs []string
+		Param1  Parameter `json:"param1"`
 	},
 	env *restrpc.Env,
 ) {
+	fmt.Println(args.CmdArgs[0])
+	fmt.Println(args.Param1.Name)
+	fmt.Println(args.Param1.Param2)
+
+	p := &Parameter{
+		Name:   args.CmdArgs[0],
+		Param2: args.Param1.Param2,
+	}
+
+	insert(p)
+
 	// env.W.Header().Set("Content-Disposition", "attachment;fileName="+"a.txt")
 
 	// env.W.Write([]byte("zhao ning"))
 
-	env.W.WriteHeader(999)
-	env.W.Write([]byte("wwwww ww"))
+	// env.W.WriteHeader(999)
+	// env.W.Write([]byte("wwwww ww"))
 	// body := ioutil.NopCloser(bytes.NewReader([]byte("zhao ning")))
 	// return &ret{}, nil
 	// return errors.New("invalid arguments")

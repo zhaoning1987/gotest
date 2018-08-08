@@ -2,24 +2,30 @@ package service
 
 import (
 	"context"
-	"io"
 
 	"github.com/qiniu/http/restrpc.v1"
 )
 
-type parameter struct {
-	Name string `json:"name"`
+type Parameter struct {
+	Name   string      `json:"name" bson:"name"`
+	Param2 interface{} `json:"param2" bson:"meta"`
 }
 
 type ITestService interface {
-	GetTest_(context.Context,
+	PostSet_(context.Context,
 		*struct {
 			CmdArgs []string
-			Par1    string        "par1"
-			File    io.ReadCloser "abc"
+			Param1  Parameter `json:"param1"`
 		},
 		*restrpc.Env,
 	)
+	PostGet_(context.Context,
+		*struct {
+			CmdArgs []string
+			// Param1  Parameter `json:"param1"`
+		},
+		*restrpc.Env,
+	) (Resp, error)
 }
 
 // type ITestService interface {

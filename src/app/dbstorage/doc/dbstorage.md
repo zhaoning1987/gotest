@@ -51,17 +51,7 @@ form参数：
 
 ```
 
-**Response**
-
-```
-200 OK
-Content-Type: application/json
-{
-   "id" : ""
-}
-```
-
-接口字段说明：
+请求字段说明：
 
 | 字段               | 取值   | 说明                     |
 | :----------------  | :----- | :----------------------- |
@@ -73,7 +63,22 @@ Content-Type: application/json
 | height             | string    | 允许的人脸最小高度，低于该值则该人脸不会入库，可选，取值为大于0的整数，默认为空（即不限制） |
 | mode               | string    | 入库时遇见错误图片时的处理方式，0为跳过继续执行，1为将任务停止，可选，默认为0 |
 | file               | string    | 表单提交的csv文件，必选 |
-| id                 | string    | 创建成功返回的任务id |
+
+**Response**
+
+```
+200 OK
+Content-Type: application/json
+{
+   "id" : ""
+}
+```
+
+返回字段说明：
+
+| 字段 | 取值    | 说明 |
+| :---| :----- | :----- |
+| id  | string | 创建成功返回的任务id |
 
 
 
@@ -87,18 +92,17 @@ Content-Type: application/json
 POST /v1/task/<task_id>/start
 ```
 
-**Response**
-
-```
-200 OK
-```
-
-接口字段说明：
+请求字段说明：
 
 | 字段    | 取值    | 说明 |
 | :------ | :----- | :----- |
 | task_id | string | 任务id |
 
+**Response**
+
+```
+200 OK
+```
 
 
 ## 1.3 停止任务
@@ -113,18 +117,17 @@ POST /v1/task/<task_id>/start
 POST /v1/task/<task_id>/stop
 ```
 
-**Response**
-
-```
-200 OK
-```
-
-接口字段说明：
+请求字段说明：
 
 | 字段    | 取值    | 说明 |
 | :------ | :----- | :----- |
 | task_id | string | 任务id |
 
+**Response**
+
+```
+200 OK
+```
 
 
 ## 1.4 删除任务
@@ -137,29 +140,37 @@ POST /v1/task/<task_id>/stop
 POST /v1/task/<task_id>/delete
 ```
 
-**Response**
-
-```
-200 OK
-```
-
-接口字段说明：
+请求字段说明：
 
 | 字段    | 取值    | 说明 |
 | :------ | :----- | :----- |
 | task_id | string | 任务id |
 
 
+**Response**
+
+```
+200 OK
+```
+
 
 ## 1.5 获得任务
 
-> 获得指定人脸库下所有任务的id，查询时还可指定任务状态
+> 获得指定人脸库下所有任务的id，可指定任务指定状态的任务
 
 **Request**
 
 ```
 GET /v1/task/<group_name>/list?status=<status>
 ```
+
+请求字段说明：
+
+| 字段       | 取值   | 说明                |
+| :-----     | :----- | :-----------------|
+| group_name | string | 人脸库名称   |
+| status     | string | 只查询指定状态的任务，可选 |
+
 
 **Response**
 
@@ -176,13 +187,11 @@ Content-Type: application/json
 
 ```
 
-接口字段说明：
+返回字段说明：
 
-| 字段       | 取值   | 说明                |
-| :-----     | :----- | :-----------------|
-| group_name | string | 人脸库名称   |
-| status     | string | 只查询指定状态的任务，可选 |
-| ids.[]     | string | 入库任务的id        |
+| 字段    | 取值   | 说明          |
+| :----- | :----- | :------------|
+| ids.[] | string | 入库任务的id  |
 
 
 
@@ -195,6 +204,12 @@ Content-Type: application/json
 ```
 GET /v1/task/<task_id>/detail
 ```
+
+请求字段说明：
+
+| 字段    | 取值    | 说明 |
+| :------ | :----- | :----- |
+| task_id | string | 任务id |
 
 **Response**
 
@@ -218,11 +233,10 @@ Content-Type: application/json
 }
 ```
 
-接口字段说明：
+返回字段说明：
 
 | 字段               | 取值   | 说明                     |
 | :----------------  | :----- | :----------------------- |
-| task_id            | string | 任务id |
 | group_name         | string | 任务所属的人脸库group名|
 | config.pos_pitch   | int    | 配置的允许的人脸最大俯仰角 |
 | config.pos_yaw     | int    | 配置的允许的人脸最大偏航角 |
@@ -245,8 +259,18 @@ Content-Type: application/json
 **Request**
 
 ```
-GET /v1/task/<task_id>/log
+GET /v1/task/<task_id>/log?skip=<skip>>&limit=<limit>&reverse=<reverse>
 ```
+
+请求字段说明：
+
+| 字段     | 取值    | 说明 |
+| :------ | :----- | :----- |
+| task_id | string | 任务id   |
+| skip    | int    | 指定跳过的日志数，可选，默认为0，即不跳过 |
+| limit   | int    | 从skip指定的offset开始，返回的日志数目，必选，取值为正整数 |
+| reverse | bool   | false为从开始查找，true为从结尾查找，可选，默认为false。例如：skip=10&limit10&reverse=false为获得第11到第20条日志，skip=10&limit10&reverse=true为获得倒数第20到倒数第10条日志|
+
 
 **Response**
 
@@ -264,14 +288,13 @@ Content-Type: application/json
 }
 ```
 
-接口字段说明：
+返回字段说明：
 
-| 字段       | 取值   | 说明                |
-| :-----     | :----- | :-----------------|
-| task_id    | string | 任务id   |
-| uri        | string | 出错的图片uri      |
-| code       | int    | 错误码  |
-| message    | string | 错误信息        |
+| 字段     | 取值    | 说明          |
+| :------ | :----- | :------------ |
+| uri     | string | 出错的图片uri   |
+| code    | int    | 错误码         |
+| message | string | 错误信息       |
 
 
 错误码说明：
@@ -280,6 +303,7 @@ Content-Type: application/json
 | :-----| :-----------------|
 | 101   | 图片uri不存在，无法下载  |
 | 102   | 图片无法打开  |
+| 103   | 图片重复  |
 | 201   | 图片不包含人脸  |
 | 202   | 人脸俯仰角超过阈值  |
 | 203   | 人脸偏航角超过阈值  |
@@ -301,6 +325,12 @@ Content-Type: application/json
 GET /v1/task/<task_id>/download_log
 ```
 
+请求字段说明：
+
+| 字段    | 取值    | 说明 |
+| :------ | :----- | :----- |
+| task_id | string | 任务id |
+
 **Response**
 
 ```
@@ -308,13 +338,6 @@ GET /v1/task/<task_id>/download_log
 Content-Type: application/octet-stream
 ***文件内容***
 ```
-
-接口字段说明：
-
-| 字段    | 取值    | 说明 |
-| :------ | :----- | :----- |
-| task_id | string | 任务id |
-
 
 # 2. 人脸入库工具
 
@@ -383,8 +406,6 @@ Content-Type: application/octet-stream
     | 字段                           | 类型      | 说明                                                                              |
     | :---------------------------- | :-------- | :--------------------------------------------------------------------------------|
     | load_image_from_folder        | boolean   | 导入图片来源有两个：true为从文件夹里导入，false为从url列表文件导入，需配合docker run指令使用 |
-    | max_try_service_time          | int       | 对于每个图片，调用入库接口时的尝试数 |
-    | max_try_download_time         | int       | 对于每个图片，从图片源url下载图片是时的总尝试数 |
     | task_config.thread_num        | int       | 该任务起用的线程数，可选，默认为20 |
     | feature_group_service         | object    | 入库服务 |  
     | feature_group_service.host    | string    | 入库服务地址 |  

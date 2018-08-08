@@ -4,27 +4,13 @@ import (
 	"fmt"
 )
 
-type stru struct {
-	str string
-}
-
-type stru2 struct {
-	stru
-	str string
+type fff struct {
+	Process []int
 }
 
 func main() {
-	a := " "
-	fmt.Println(len(a))
+	fmt.Println(len(ggg().Process))
 }
-
-func test1() (res stru) {
-	res = *test()
-	return
-}
-
-func test() (res *stru) {
-	res = &stru{}
-	res.str = "aa"
-	return
+func ggg() *fff {
+	return &fff{}
 }
