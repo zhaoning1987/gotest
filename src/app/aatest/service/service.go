@@ -12,20 +12,27 @@ type Parameter struct {
 }
 
 type ITestService interface {
-	PostSet_(context.Context,
+	// PostSet_(context.Context,
+	// 	*struct {
+	// 		CmdArgs []string
+	// 		Param1  Parameter `json:"param1"`
+	// 	},
+	// 	*restrpc.Env,
+	// )
+	// PostGet_(context.Context,
+	// 	*struct {
+	// 		CmdArgs []string
+	// 		// Param1  Parameter `json:"param1"`
+	// 	},
+	// 	*restrpc.Env,
+	// ) (Resp, error)
+
+	GetTest(context.Context,
 		*struct {
 			CmdArgs []string
-			Param1  Parameter `json:"param1"`
+			Param   string `json:"param"`
 		},
-		*restrpc.Env,
-	)
-	PostGet_(context.Context,
-		*struct {
-			CmdArgs []string
-			// Param1  Parameter `json:"param1"`
-		},
-		*restrpc.Env,
-	) (Resp, error)
+		*restrpc.Env)
 }
 
 // type ITestService interface {

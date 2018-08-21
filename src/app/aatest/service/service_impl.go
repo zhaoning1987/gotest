@@ -45,6 +45,17 @@ type Resp struct {
 	PPP  interface{} `json:"meta"`
 }
 
+func (s *TestService) GetTest(ctx context.Context,
+	args *struct {
+		CmdArgs []string
+		Param   string `json:"param"`
+	},
+	env *restrpc.Env,
+) {
+	fmt.Println("===========")
+	fmt.Println(args.Param)
+}
+
 func (s *TestService) PostGet_(ctx context.Context,
 	args *struct {
 		CmdArgs []string
