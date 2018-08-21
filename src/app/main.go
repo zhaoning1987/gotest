@@ -32,4 +32,6 @@ func main() {
 		_ = json.Unmarshal([]byte(scanner.Text()), &obj)
 		fmt.Println(obj)
 	}
+
+	fmt.Println("commit11111")
 }
