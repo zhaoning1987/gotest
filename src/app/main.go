@@ -51,4 +51,6 @@ func main1() {
 	if err != nil {
 		fmt.Printf("create directory [%s] failed: %v", path, err)
 	}
+
+	aaaa
 }
