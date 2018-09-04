@@ -360,12 +360,12 @@ Content-Type: application/octet-stream
 
 > 多线程入库，且处理多线程下的中断续传（场景为海量文件，非大容量文件，重点为多线程模式下记录上次中断点）
 
-1. 按filepath.walk()默认的方式获取文件夹内所有图片，按文件名字典排序。或逐行读取csv文件内的url信息
+1. 按filepath.walk()默认的方式获取文件夹内所有图片，按文件名字典排序。或逐行读取url列表文件内的url信息
 2. 将每个图片包装成job，扔给任务池，多线程执行
 3. 每个线程记录当前处理图片的index
-4. 如中断，下次执行时首先获得所有线程记录的index中最小值，并直接从该index开始续传
+4. 如中断，下次执行时首先获得所有线程记录的index，从这些index开始续传并跳过已处理的index
 5. 每次处理完图片，线程会将该图片sha1值记录到本地文件，便于去重（主要是中断情况下的去重）。每次程序开始也会读取该文件获得已处理图片的sha1（如果有）
-6. 入库的图片来源有两个：指定文件夹里的所有图片或指定url列表csv文件中的所有图片url，默认的图片文件夹是/workspace/source/，默认的url列表csv文件是/workspace/urlSource
+6. 入库的图片来源有两个：指定文件夹里的所有图片或指定url列表文件中的所有图片url
 
 
 ## 2.4 字段录入
@@ -373,28 +373,28 @@ Content-Type: application/octet-stream
 > 调用人脸入库接口时，传入id, uri, tag, desc四个字段。目前支持三种图片源
 
 1. 图片来源为文件夹时：
-    | 字段   | 说明                 |
-    | :---- | :--------            |
-    | id    | 图片在系统中的路径      |
-    | uri   | 图片base64值          |
-    | tag   | 图片文件名去除扩展名后的第一个‘_‘字符之前的值。如’abc_123.jpg‘,则为abc；如’abcd.jpg‘,则为abcd；如’abcd_123_56‘,则为abcd   |
-    | desc  | 图片文件名去除扩展名后的第一个‘_‘字符之后的值。如’abc_123.jpg‘,则为123；如’abcd.jpg‘,则为空；如’abcd_123_56‘,则为123_56   |
+| 字段   | 说明             |
+| :---- | :-------------- |
+| id    | 图片在系统中的路径 |
+| uri   | 图片base64值 |
+| tag   | 空  |
+| desc  | 空 |
 
 2. 图片来源为csv文件时（文件后缀名为.csv），默认为每行格式 id,url,tag,desc。例：faceId,http://somesite.com/test.jpg,faceTag,faceDescription
-    | 字段   | 说明                     |
-    | :---- | :--------                |
-    | id    | csv文件中的第一列值         |
-    | uri   | csv文件中的第二列值         |
-    | tag   | csv文件中的第三列值，如果有  |
-    | desc  | csv文件中的第四列值，如果有  |
+| 字段   | 说明                     |
+| :---- | :--------                |
+| id    | csv文件中的第一列值         |
+| uri   | csv文件中的第二列值         |
+| tag   | csv文件中的第三列值，如果有  |
+| desc  | csv文件中的第四列值，如果有  |
 
 3. 图片来源为json文件时（文件后缀名为.json），每行为json格式，例：{"image":{"id":"id1","uri":"http://localhost:8090/11.jpg","tag":"tag1", "desc":"desc1"}}
-    | 字段   | 说明                     |
-    | :---- | :--------                |
-    | id    | json中的id字段值  |
-    | uri   | json中的uri字段值    |
-    | tag   | json中的tag字段值，该字段可没有  |
-    | desc  | json中的desc字段值，该字段可没有  |
+| 字段   | 说明      |
+| :---- | :-------- |
+| id    | json中的id字段值  |
+| uri   | json中的uri字段值    |
+| tag   | json中的tag字段值，该字段可没有  |
+| desc  | json中的desc字段值，该字段可没有  |
 
 ## 2.5 使用说明
 
