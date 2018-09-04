@@ -373,28 +373,31 @@ Content-Type: application/octet-stream
 > 调用人脸入库接口时，传入id, uri, tag, desc四个字段。目前支持三种图片源
 
 1. 图片来源为文件夹时：
-| 字段   | 说明             |
-| :---- | :-------------- |
-| id    | 图片在系统中的路径 |
-| uri   | 图片base64值 |
-| tag   | 空  |
-| desc  | 空 |
+
+    | 字段   | 说明            |
+    | :---- | :-------------- |
+    | id    | 图片在系统中的路径 |
+    | uri   | 图片base64值 |
+    | tag   | 空  |
+    | desc  | 空 |
 
 2. 图片来源为csv文件时（文件后缀名为.csv），默认为每行格式 id,url,tag,desc。例：faceId,http://somesite.com/test.jpg,faceTag,faceDescription
-| 字段   | 说明                     |
-| :---- | :--------                |
-| id    | csv文件中的第一列值         |
-| uri   | csv文件中的第二列值         |
-| tag   | csv文件中的第三列值，如果有  |
-| desc  | csv文件中的第四列值，如果有  |
+
+    | 字段   | 说明                     |
+    | :---- | :--------                |
+    | id    | csv文件中的第一列值         |
+    | uri   | csv文件中的第二列值         |
+    | tag   | csv文件中的第三列值，如果有  |
+    | desc  | csv文件中的第四列值，如果有  |
 
 3. 图片来源为json文件时（文件后缀名为.json），每行为json格式，例：{"image":{"id":"id1","uri":"http://localhost:8090/11.jpg","tag":"tag1", "desc":"desc1"}}
-| 字段   | 说明      |
-| :---- | :-------- |
-| id    | json中的id字段值  |
-| uri   | json中的uri字段值    |
-| tag   | json中的tag字段值，该字段可没有  |
-| desc  | json中的desc字段值，该字段可没有  |
+
+    | 字段   | 说明       |
+    | :---- | :--------  |
+    | id    | json中的id字段值  |
+    | uri   | json中的uri字段值    |
+    | tag   | json中的tag字段值，该字段可没有  |
+    | desc  | json中的desc字段值，该字段可没有  |
 
 ## 2.5 使用说明
 
