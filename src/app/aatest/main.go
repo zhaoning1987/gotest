@@ -24,10 +24,11 @@ func init() {
 func main() {
 	prefix := "v1/test"
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	log.SetOutputLevel(0)
 
 	alMux := servestk.New(restrpc.NewServeMux(), func(
 		w http.ResponseWriter, req *http.Request, f func(http.ResponseWriter, *http.Request)) {
-		req.Header.Set("Authorization", "QiniuStub uid=1&ut=0")
+		// req.Header.Set("Authorization", "QiniuStub uid=1&ut=0")
 		f(w, req)
 	})
 
